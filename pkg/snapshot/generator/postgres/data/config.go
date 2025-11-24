@@ -2,6 +2,8 @@
 
 package postgres
 
+import "github.com/xataio/pgstream/pkg/snapshot"
+
 type Config struct {
 	// Postgres connection URL. Required.
 	URL string
@@ -22,6 +24,8 @@ type Config struct {
 	// snapshot generator can open to Postgres. This setting is optional.
 	// Defaults to 50
 	MaxConnections uint
+	// Delta contains configuration for incremental snapshot replays (optional).
+	Delta *snapshot.DeltaConfig
 }
 
 const (

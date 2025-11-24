@@ -34,6 +34,15 @@ source:
           roles_snapshot_mode: # enabled by default. Can be set to disabled to disable roles snapshotting, or can be set to no_passwords to exclude role passwords
           exclude_security_labels: ["anon"] # list of providers whose security labels will be excluded from the snapshot. Wildcard supported.
           dump_file: pg_dump.sql # name of the file where the contents of the schema pg_dump command and output will be written for debugging purposes.
+      delta:
+        max_tables_per_run: 10 # maximum number of tables to refresh per incremental snapshot batch
+        lag_threshold_bytes: 16777216 # trigger incremental snapshot if lag exceeds this value (in WAL bytes)
+        publication_name: "pgstream_delta" # pgoutput publication used for replaying WAL changes during incremental snapshots
+        slot_name: "" # optional: reuse an existing logical replication slot for delta replays instead of creating temporary ones
+        replay_timeout: "0s" # optional: maximum duration for a delta replay run (0s disables the timeout)
+        auto_publication:
+          enabled: false # when true, pgstream drops/recreates the publication using the snapshot table patterns
+          custom_sql: [] # optional list of SQL statements to run instead of the automatically generated ones
     replication: # when mode is replication or snapshot_and_replication
       replication_slot: "pgstream_mydatabase_slot"
   kafka:

@@ -125,3 +125,9 @@ func (s *SnapshotSchemaTableFinder) CreateSnapshot(ctx context.Context, ss *snap
 func (s *SnapshotSchemaTableFinder) Close() error {
 	return s.conn.Close(context.Background())
 }
+
+func (s *SnapshotSchemaTableFinder) SetTableCompletionHook(hook generator.TableCompletionHook) {
+	if notifier, ok := s.wrapped.(generator.TableCompletionNotifier); ok {
+		notifier.SetTableCompletionHook(hook)
+	}
+}

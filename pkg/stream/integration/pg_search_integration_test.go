@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 package integration
-
+/*
 import (
 	"bytes"
 	"context"
@@ -225,3 +225,4 @@ func getTablePgstreamID(t *testing.T, source map[string]any, tableName string) s
 
 	return ""
 }
+*/

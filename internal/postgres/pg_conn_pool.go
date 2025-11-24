@@ -16,7 +16,14 @@ type Pool struct {
 
 type PoolOption func(*pgxpool.Config)
 
-const maxConns = 50
+// defaultMaxConns defines how many Postgres connections a pool that does not
+// override its size is allowed to keep open concurrently. Most pgstream pools
+// (schema log store, snapshot recorder, webhook stores, etc.) only need a
+// handful of sessions, so keeping the default low avoids exhausting the source
+// database connection limit when several components are enabled at once.
+// High-throughput components such as the data snapshot generator can override
+// this limit via WithMaxConnections.
+const maxConns = 10
 
 func NewConnPool(ctx context.Context, url string, opts ...PoolOption) (*Pool, error) {
 	escapedURL, err := escapeConnectionURL(url)

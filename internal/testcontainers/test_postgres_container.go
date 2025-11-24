@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/go-connections/nat"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -21,7 +23,7 @@ const (
 	Postgres17 PostgresImage = "debezium/postgres:17-alpine"
 )
 
-func SetupPostgresContainer(ctx context.Context, url *string, image PostgresImage, configFile ...string) (cleanup, error) {
+func SetupPostgresContainer(ctx context.Context, cfg ContainerConfig, url *string) (cleanup, error) {
 	waitForLogs := wait.
 		ForLog("database system is ready to accept connections").
 		WithOccurrence(2).
@@ -30,8 +32,23 @@ func SetupPostgresContainer(ctx context.Context, url *string, image PostgresImag
 	opts := []testcontainers.ContainerCustomizer{
 		testcontainers.WithWaitStrategy(waitForLogs),
 	}
-	if len(configFile) > 0 {
-		opts = append(opts, postgres.WithConfigFile(configFile[0]))
+	if cfg.ConfigFile != "" {
+		opts = append(opts, postgres.WithConfigFile(cfg.ConfigFile))
+	}
+
+	image := cfg.Image
+	if image == "" {
+		image = Postgres14
+	}
+
+	if cfg.PortBindings != nil {
+		opts = append(opts, testcontainers.WithHostConfigModifier(func(hc *container.HostConfig) {
+			hc.PortBindings = cfg.PortBindings
+		}))
+	}
+
+	if len(cfg.Env) > 0 {
+		opts = append(opts, testcontainers.WithEnv(cfg.Env))
 	}
 
 	ctr, err := postgres.Run(ctx, string(image), opts...)
@@ -47,4 +64,11 @@ func SetupPostgresContainer(ctx context.Context, url *string, image PostgresImag
 	return func() error {
 		return ctr.Terminate(ctx)
 	}, nil
+}
+
+type ContainerConfig struct {
+	Image        PostgresImage
+	ConfigFile   string
+	PortBindings nat.PortMap
+	Env          map[string]string
 }

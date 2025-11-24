@@ -67,6 +67,12 @@ func (i *SnapshotGenerator) Close() error {
 	return i.inner.Close()
 }
 
+func (i *SnapshotGenerator) SetTableCompletionHook(hook generator.TableCompletionHook) {
+	if notifier, ok := i.inner.(generator.TableCompletionNotifier); ok {
+		notifier.SetTableCompletionHook(hook)
+	}
+}
+
 func (i *SnapshotGenerator) initMetrics() error {
 	if i.meter == nil {
 		return nil

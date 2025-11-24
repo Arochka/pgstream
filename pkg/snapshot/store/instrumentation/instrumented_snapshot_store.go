@@ -59,6 +59,18 @@ func (i *Store) GetSnapshotRequestsBySchema(ctx context.Context, schema string) 
 	return i.inner.GetSnapshotRequestsBySchema(ctx, schema)
 }
 
+func (i *Store) MarkTableCompleted(ctx context.Context, schema, table, lsn string) (err error) {
+	ctx, span := otel.StartSpan(ctx, i.tracer, "snapshotStore.MarkTableCompleted",
+		trace.WithAttributes(
+			attribute.KeyValue{Key: "schema", Value: attribute.StringValue(schema)},
+			attribute.KeyValue{Key: "table", Value: attribute.StringValue(table)},
+			attribute.KeyValue{Key: "lsn", Value: attribute.StringValue(lsn)},
+		))
+	defer otel.CloseSpan(span, err)
+
+	return i.inner.MarkTableCompleted(ctx, schema, table, lsn)
+}
+
 func (i *Store) Close() error {
 	return i.inner.Close()
 }

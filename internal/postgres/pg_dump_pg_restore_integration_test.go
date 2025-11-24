@@ -22,11 +22,15 @@ func Test_pgdump_pgrestore(t *testing.T) {
 
 	run := func(t *testing.T, format string) {
 		var sourcePGURL, targetPGURL string
-		cleanup, err := testcontainers.SetupPostgresContainer(ctx, &sourcePGURL, testcontainers.Postgres17)
+		cleanup, err := testcontainers.SetupPostgresContainer(ctx, testcontainers.ContainerConfig{
+			Image: testcontainers.Postgres17,
+		}, &sourcePGURL)
 		require.NoError(t, err)
 		defer cleanup()
 
-		cleanup2, err := testcontainers.SetupPostgresContainer(ctx, &targetPGURL, testcontainers.Postgres17)
+		cleanup2, err := testcontainers.SetupPostgresContainer(ctx, testcontainers.ContainerConfig{
+			Image: testcontainers.Postgres17,
+		}, &targetPGURL)
 		require.NoError(t, err)
 		defer cleanup2()
 

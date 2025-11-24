@@ -9,12 +9,14 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/jackc/pgx/v5"
 	pglib "github.com/xataio/pgstream/internal/postgres"
 	pgmigrations "github.com/xataio/pgstream/migrations/postgres"
+	snap "github.com/xataio/pgstream/pkg/snapshot"
+	pgsnapshotstore "github.com/xataio/pgstream/pkg/snapshot/store/postgres"
 	"github.com/xataio/pgstream/pkg/transformers/builder"
 	"github.com/xataio/pgstream/pkg/wal/processor/transformer"
-
-	"github.com/jackc/pgx/v5"
+	replicationpg "github.com/xataio/pgstream/pkg/wal/replication/postgres"
 )
 
 // StatusChecker is responsible for validating the status of the pgstream setup
@@ -27,6 +29,7 @@ type StatusChecker struct {
 	configParser         func(pgURL string) (*pgx.ConnConfig, error)
 	migratorBuilder      func(string) (migrator, error)
 	ruleValidatorBuilder func(context.Context, string, []string) (ruleValidator, error)
+	snapshotStoreBuilder func(context.Context, string) (deltaSnapshotStore, error)
 }
 
 type ruleValidator func(ctx context.Context, rules transformer.Rules) (map[string]transformer.ColumnTransformers, error)
@@ -34,6 +37,11 @@ type ruleValidator func(ctx context.Context, rules transformer.Rules) (map[strin
 type migrator interface {
 	Version() (uint, bool, error)
 	Close() (error, error)
+}
+
+type deltaSnapshotStore interface {
+	GetSnapshotRequestsByStatus(ctx context.Context, status snap.Status) ([]*snap.Request, error)
+	Close() error
 }
 
 const wal2jsonPlugin = "wal2json"
@@ -57,6 +65,9 @@ func NewStatusChecker() *StatusChecker {
 				return nil, err
 			}
 			return validator.ParseAndValidate, nil
+		},
+		snapshotStoreBuilder: func(ctx context.Context, url string) (deltaSnapshotStore, error) {
+			return pgsnapshotstore.New(ctx, url)
 		},
 	}
 }
@@ -82,11 +93,17 @@ func (s *StatusChecker) Status(ctx context.Context, config *Config) (*Status, er
 		return nil, fmt.Errorf("checking transformation rules status: %w", err)
 	}
 
+	deltaStatus, err := s.deltaStatus(ctx, config)
+	if err != nil {
+		return nil, fmt.Errorf("checking delta status: %w", err)
+	}
+
 	return &Status{
 		Init:                initStatus,
 		Config:              s.configStatus(config),
 		Source:              sourceStatus,
 		TransformationRules: transformationRulesStatus,
+		Delta:               deltaStatus,
 	}, nil
 }
 
@@ -203,6 +220,63 @@ func (s *StatusChecker) transformationRulesStatus(ctx context.Context, config *C
 		}
 	}
 
+	return status, nil
+}
+
+func (s *StatusChecker) deltaStatus(ctx context.Context, config *Config) (*DeltaStatus, error) {
+	if config == nil || config.Listener.Postgres == nil || config.Listener.Postgres.Snapshot == nil {
+		return nil, nil
+	}
+	storeURL := config.SnapshotStoreURL()
+	if storeURL == "" || s.snapshotStoreBuilder == nil {
+		return nil, nil
+	}
+	store, err := s.snapshotStoreBuilder(ctx, storeURL)
+	if err != nil {
+		return nil, fmt.Errorf("opening snapshot store: %w", err)
+	}
+	defer store.Close()
+
+	parser := replicationpg.NewLSNParser()
+	status := &DeltaStatus{}
+	appendRequests := func(snapStatus snap.Status, target *[]DeltaRequestStatus) error {
+		reqs, err := store.GetSnapshotRequestsByStatus(ctx, snapStatus)
+		if err != nil {
+			return err
+		}
+		for _, req := range reqs {
+			if req == nil || req.Mode != snap.ModeDelta {
+				continue
+			}
+			entry := DeltaRequestStatus{
+				Schema:   req.Schema,
+				Tables:   append([]string{}, req.Tables...),
+				StartLSN: req.StartLSN,
+				EndLSN:   req.EndLSN,
+			}
+			if req.StartLSN != "" && req.EndLSN != "" {
+				start, err := parser.FromString(req.StartLSN)
+				if err == nil {
+					if end, err := parser.FromString(req.EndLSN); err == nil && end > start {
+						entry.LagBytes = uint64(end - start)
+					}
+				}
+			}
+			*target = append(*target, entry)
+		}
+		return nil
+	}
+
+	if err := appendRequests(snap.StatusRequested, &status.Pending); err != nil {
+		return nil, fmt.Errorf("loading pending delta requests: %w", err)
+	}
+	if err := appendRequests(snap.StatusInProgress, &status.InProgress); err != nil {
+		return nil, fmt.Errorf("loading in-progress delta requests: %w", err)
+	}
+
+	if len(status.Pending) == 0 && len(status.InProgress) == 0 {
+		return nil, nil
+	}
 	return status, nil
 }
 

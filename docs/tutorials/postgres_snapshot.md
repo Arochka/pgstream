@@ -90,6 +90,8 @@ The snapshot listener can also be configured to record and update the status of 
 PGSTREAM_POSTGRES_SNAPSHOT_STORE_URL="postgres://postgres:postgres@localhost:5432?sslmode=disable"
 ```
 
+When the snapshot store is enabled, each table is marked as completed as soon as it finishes snapshotting. If the process is interrupted, pgstream will resume from the remaining tables instead of starting from scratch, effectively giving you incremental snapshots out of the box.
+
 ### Processor
 
 With the listener side ready, the next step is to configure the processor. Since we want the snapshot reach a PostgreSQL database, we will set the PostgreSQL writer configuration variables. The only required value is the URL of the target database, where the snapshotted schema/data from the source database will be streamed. We use the URL of the docker PostgreSQL database we started earlier (note the port is the only difference between the source and the target PostgreSQL databases).

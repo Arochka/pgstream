@@ -1,0 +1,44 @@
+source:
+  postgres:
+    url: "postgres://postgres:postgres@localhost:5432?sslmode=disable"
+    mode: snapshot_and_replication
+    snapshot:
+      mode: full
+      tables: ["*.*"]
+      excluded_tables: ["pgstream.*"]
+      snapshot_workers: 2
+      recorder:
+        postgres_url: "postgres://postgres:postgres@localhost:7654?sslmode=disable"
+        repeatable_snapshots: false
+      data:
+        schema_workers: 4
+        table_workers: 4
+        batch_bytes: 83886080
+      schema:
+        mode: pgdump_pgrestore
+        pgdump_pgrestore:
+          roles_snapshot_mode: disabled
+          no_owner: true
+          no_privileges: true
+          clean_target_db: false
+          create_target_db: false
+      delta:
+        max_tables_per_run: 8
+        lag_threshold_bytes: 33554432
+        publication_name: "pgstream_delta"
+        slot_name: "pgstream_replication_slot"
+        replay_timeout: "0s"
+        auto_publication:
+          enabled: true
+    replication:
+      replication_slot: "pgstream_replication_slot"
+
+target:
+  postgres:
+    url: "postgres://postgres:postgres@localhost:7654?sslmode=disable"
+    batch:
+      timeout: 5000
+      size: 200
+      ignore_send_errors: true
+    disable_triggers: false
+    on_conflict_action: "nothing"

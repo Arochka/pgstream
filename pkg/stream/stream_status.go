@@ -12,6 +12,7 @@ type Status struct {
 	Config              *ConfigStatus
 	TransformationRules *TransformationRulesStatus
 	Source              *SourceStatus
+	Delta               *DeltaStatus
 }
 
 type ConfigStatus struct {
@@ -27,6 +28,19 @@ type TransformationRulesStatus struct {
 type SourceStatus struct {
 	Reachable bool
 	Errors    []string
+}
+
+type DeltaStatus struct {
+	Pending    []DeltaRequestStatus
+	InProgress []DeltaRequestStatus
+}
+
+type DeltaRequestStatus struct {
+	Schema   string   `json:"schema"`
+	Tables   []string `json:"tables"`
+	StartLSN string   `json:"start_lsn,omitempty"`
+	EndLSN   string   `json:"end_lsn,omitempty"`
+	LagBytes uint64   `json:"lag_bytes,omitempty"`
 }
 
 type InitStatus struct {
@@ -102,8 +116,71 @@ func (s *Status) PrettyPrint() string {
 	prettyPrint.WriteString(s.TransformationRules.PrettyPrint())
 	prettyPrint.WriteByte('\n')
 	prettyPrint.WriteString(s.Source.PrettyPrint())
+	if s.Delta != nil {
+		prettyPrint.WriteByte('\n')
+		prettyPrint.WriteString(s.Delta.PrettyPrint())
+	}
 
 	return prettyPrint.String()
+}
+
+func (d *DeltaStatus) PrettyPrint() string {
+	if d == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Delta snapshots:\n")
+	if len(d.Pending) == 0 && len(d.InProgress) == 0 {
+		b.WriteString(" - Queue empty")
+		return b.String()
+	}
+
+	if len(d.Pending) == 0 {
+		b.WriteString(" - Pending: none\n")
+	} else {
+		b.WriteString(" - Pending:\n")
+		for _, req := range d.Pending {
+			b.WriteString(formatDeltaRequest(req))
+		}
+	}
+
+	if len(d.InProgress) == 0 {
+		b.WriteString(" - In progress: none")
+	} else {
+		b.WriteString(" - In progress:\n")
+		for _, req := range d.InProgress {
+			b.WriteString(formatDeltaRequest(req))
+		}
+	}
+	return strings.TrimSuffix(b.String(), "\n")
+}
+
+func formatDeltaRequest(req DeltaRequestStatus) string {
+	var b strings.Builder
+	b.WriteString("    * ")
+	if req.Schema != "" {
+		b.WriteString(req.Schema)
+	} else {
+		b.WriteString("<unknown-schema>")
+	}
+	if len(req.Tables) > 0 {
+		b.WriteString(".")
+		b.WriteString(strings.Join(req.Tables, ","))
+	}
+	if req.StartLSN != "" || req.EndLSN != "" {
+		b.WriteString(" [")
+		b.WriteString(req.StartLSN)
+		if req.EndLSN != "" {
+			b.WriteString(" -> ")
+			b.WriteString(req.EndLSN)
+		}
+		b.WriteString("]")
+	}
+	if req.LagBytes > 0 {
+		b.WriteString(fmt.Sprintf(" lag=%dB", req.LagBytes))
+	}
+	b.WriteByte('\n')
+	return b.String()
 }
 
 // GetErrors aggregates all errors from the initialisation status.

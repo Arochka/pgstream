@@ -329,3 +329,35 @@ func TestInitStatus_PrettyPrint(t *testing.T) {
 		})
 	}
 }
+
+func TestStatus_PrettyPrintWithDelta(t *testing.T) {
+	t.Parallel()
+
+	status := &Status{
+		Init:   &InitStatus{},
+		Config: &ConfigStatus{},
+		Source: &SourceStatus{},
+		Delta: &DeltaStatus{
+			Pending: []DeltaRequestStatus{
+				{Schema: "public", Tables: []string{"users"}, StartLSN: "0/1", EndLSN: "0/3", LagBytes: 2},
+			},
+			InProgress: []DeltaRequestStatus{
+				{Schema: "sales", Tables: []string{"orders"}, StartLSN: "0/4", EndLSN: "0/6"},
+			},
+		},
+	}
+
+	want := `Initialisation status:
+Config status:
+ - Valid: false
+
+Source status:
+ - Reachable: false
+Delta snapshots:
+ - Pending:
+    * public.users [0/1 -> 0/3] lag=2B
+ - In progress:
+    * sales.orders [0/4 -> 0/6]`
+
+	require.Equal(t, want, status.PrettyPrint())
+}

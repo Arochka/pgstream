@@ -5,13 +5,26 @@ package snapshot
 type Snapshot struct {
 	SchemaTables         map[string][]string
 	SchemaExcludedTables map[string][]string
+	DeltaRequests        []*Request
 }
 
+type Mode string
+
+const (
+	ModeFull  Mode = "full"
+	ModeDelta Mode = "delta"
+)
+
 type Request struct {
-	Schema string
-	Tables []string
-	Status Status
-	Errors *SchemaErrors
+	Schema             string
+	Tables             []string
+	CompletedTables    []string
+	CompletedTableLSNs map[string]string
+	Status             Status
+	Errors             *SchemaErrors
+	Mode               Mode
+	StartLSN           string
+	EndLSN             string
 }
 
 type Status string

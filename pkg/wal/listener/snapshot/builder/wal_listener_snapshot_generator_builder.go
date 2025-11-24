@@ -18,9 +18,11 @@ import (
 	pgdumprestoregenerator "github.com/xataio/pgstream/pkg/snapshot/generator/postgres/schema/pgdumprestore"
 	schemalogsnapshotgenerator "github.com/xataio/pgstream/pkg/snapshot/generator/postgres/schema/schemalog"
 	pgtablefinder "github.com/xataio/pgstream/pkg/snapshot/generator/postgres/tablefinder"
+	snapshotprogress "github.com/xataio/pgstream/pkg/snapshot/progress"
 	snapshotstore "github.com/xataio/pgstream/pkg/snapshot/store"
 	snapshotstoreinstrumentation "github.com/xataio/pgstream/pkg/snapshot/store/instrumentation"
 	pgsnapshotstore "github.com/xataio/pgstream/pkg/snapshot/store/postgres"
+	"github.com/xataio/pgstream/pkg/wal/delta"
 	"github.com/xataio/pgstream/pkg/wal/listener"
 	listenersnapshot "github.com/xataio/pgstream/pkg/wal/listener/snapshot"
 	"github.com/xataio/pgstream/pkg/wal/listener/snapshot/adapter"
@@ -47,11 +49,32 @@ var errSchemaSnapshotNotConfigured = errors.New("no schema snapshot has been con
 // │ └─────────┘  └─────────┘  └────────┘  └─────────┘ │
 // └───────────────────────────────────────────────────┘
 
-func NewSnapshotGenerator(ctx context.Context, cfg *SnapshotListenerConfig, p listener.Processor, logger loglib.Logger, instrumentation *otel.Instrumentation) (listenersnapshot.Generator, error) {
+func NewSnapshotGenerator(ctx context.Context, cfg *SnapshotListenerConfig, p listener.Processor, logger loglib.Logger, instrumentation *otel.Instrumentation, progressTracker *snapshotprogress.Progress) (listenersnapshot.Generator, error) {
 	var g generator.SnapshotGenerator
 	var err error
 
-	// postgres data snapshot generator layer
+	var deltaReader *delta.Reader
+	if cfg.Delta != nil && cfg.Data != nil {
+		if cfg.Delta.PublicationName == "" {
+			return nil, fmt.Errorf("snapshot delta publication name is required when delta mode is enabled")
+		}
+		if err := ensureDeltaPublication(ctx, cfg, logger); err != nil {
+			return nil, err
+		}
+		slotManager, err := delta.NewSlotManager(delta.SlotConfig{PostgresURL: cfg.Data.URL},
+			delta.WithLogger(logger))
+		if err != nil {
+			return nil, fmt.Errorf("create delta slot manager: %w", err)
+		}
+		deltaReader, err = delta.NewReader(delta.ReaderConfig{
+			SlotManager: slotManager,
+			PostgresURL: cfg.Data.URL,
+			Publication: cfg.Delta.PublicationName,
+		}, delta.WithReaderLogger(logger))
+		if err != nil {
+			return nil, fmt.Errorf("create delta reader: %w", err)
+		}
+	}
 	if cfg.Data != nil {
 		opts := []pgsnapshotgenerator.Option{
 			pgsnapshotgenerator.WithLogger(logger),
@@ -62,9 +85,24 @@ func NewSnapshotGenerator(ctx context.Context, cfg *SnapshotListenerConfig, p li
 		if instrumentation.IsEnabled() {
 			opts = append(opts, pgsnapshotgenerator.WithInstrumentation(instrumentation))
 		}
+		if deltaReader != nil {
+			opts = append(opts, pgsnapshotgenerator.WithDeltaReader(deltaReader))
+		}
 		g, err = pgsnapshotgenerator.NewSnapshotGenerator(ctx, cfg.Data, p, opts...)
 		if err != nil {
 			return nil, err
+		}
+
+		if cfg.Recorder != nil && cfg.Recorder.SnapshotStoreURL != "" {
+			var snapshotStore snapshotstore.Store
+			snapshotStore, err = pgsnapshotstore.New(ctx, cfg.Recorder.SnapshotStoreURL)
+			if err != nil {
+				return nil, fmt.Errorf("create postgres snapshot store: %w", err)
+			}
+			if instrumentation.IsEnabled() {
+				snapshotStore = snapshotstoreinstrumentation.NewStore(snapshotStore, instrumentation)
+			}
+			g = generator.NewSnapshotRecorder(snapshotStore, g, cfg.Recorder.RepeatableSnapshots, progressTracker, cfg.Delta)
 		}
 
 		// snapshot table finder layer
@@ -81,23 +119,14 @@ func NewSnapshotGenerator(ctx context.Context, cfg *SnapshotListenerConfig, p li
 
 	if cfg.Schema != nil {
 		// postgres schema snapshot generator layer
-		g, err = newSchemaSnapshotGenerator(ctx, cfg.Schema, g, p, logger, instrumentation, !cfg.DisableProgressTracking)
+		schemaOpts := []pgdumprestoregenerator.Option{}
+		if cfg.Delta != nil && cfg.Delta.PublicationName != "" {
+			schemaOpts = append(schemaOpts, pgdumprestoregenerator.WithDropPublications([]string{cfg.Delta.PublicationName}))
+		}
+		g, err = newSchemaSnapshotGenerator(ctx, cfg.Schema, g, p, logger, instrumentation, !cfg.DisableProgressTracking, schemaOpts...)
 		if err != nil {
 			return nil, err
 		}
-	}
-
-	if cfg.Recorder != nil && cfg.Recorder.SnapshotStoreURL != "" {
-		// snapshot activity recorder layer
-		var snapshotStore snapshotstore.Store
-		snapshotStore, err := pgsnapshotstore.New(ctx, cfg.Recorder.SnapshotStoreURL)
-		if err != nil {
-			return nil, fmt.Errorf("create postgres snapshot store: %w", err)
-		}
-		if instrumentation.IsEnabled() {
-			snapshotStore = snapshotstoreinstrumentation.NewStore(snapshotStore, instrumentation)
-		}
-		g = generator.NewSnapshotRecorder(snapshotStore, g, cfg.Recorder.RepeatableSnapshots)
 	}
 
 	if instrumentation.IsEnabled() {
@@ -110,7 +139,7 @@ func NewSnapshotGenerator(ctx context.Context, cfg *SnapshotListenerConfig, p li
 	return adapter.NewSnapshotGeneratorAdapter(&cfg.Adapter, g, adapter.WithLogger(logger)), nil
 }
 
-func newSchemaSnapshotGenerator(ctx context.Context, cfg *SchemaSnapshotConfig, g generator.SnapshotGenerator, processor listener.Processor, logger loglib.Logger, instrumentation *otel.Instrumentation, progressTracking bool) (generator.SnapshotGenerator, error) {
+func newSchemaSnapshotGenerator(ctx context.Context, cfg *SchemaSnapshotConfig, g generator.SnapshotGenerator, processor listener.Processor, logger loglib.Logger, instrumentation *otel.Instrumentation, progressTracking bool, extraOpts ...pgdumprestoregenerator.Option) (generator.SnapshotGenerator, error) {
 	switch {
 	case cfg.SchemaLogStore != nil:
 		// postgres schemalog schema snapshot generator
@@ -141,6 +170,7 @@ func newSchemaSnapshotGenerator(ctx context.Context, cfg *SchemaSnapshotConfig, 
 		if instrumentation.IsEnabled() {
 			opts = append(opts, pgdumprestoregenerator.WithInstrumentation(instrumentation))
 		}
+		opts = append(opts, extraOpts...)
 		return pgdumprestoregenerator.NewSnapshotGenerator(ctx, cfg.DumpRestore, opts...)
 	default:
 		return nil, errSchemaSnapshotNotConfigured

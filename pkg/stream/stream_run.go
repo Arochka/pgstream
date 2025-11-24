@@ -11,6 +11,10 @@ import (
 	kafkainstrumentation "github.com/xataio/pgstream/pkg/kafka/instrumentation"
 	loglib "github.com/xataio/pgstream/pkg/log"
 	"github.com/xataio/pgstream/pkg/otel"
+	"github.com/xataio/pgstream/pkg/snapshot/deltaqueue"
+	snapshotprogress "github.com/xataio/pgstream/pkg/snapshot/progress"
+	snapshotstore "github.com/xataio/pgstream/pkg/snapshot/store"
+	pgsnapshotstore "github.com/xataio/pgstream/pkg/snapshot/store/postgres"
 	"github.com/xataio/pgstream/pkg/wal/checkpointer"
 	kafkacheckpoint "github.com/xataio/pgstream/pkg/wal/checkpointer/kafka"
 	pgcheckpoint "github.com/xataio/pgstream/pkg/wal/checkpointer/postgres"
@@ -31,6 +35,46 @@ import (
 func Run(ctx context.Context, logger loglib.Logger, config *Config, init bool, instrumentation *otel.Instrumentation) error {
 	if err := config.IsValid(); err != nil {
 		return fmt.Errorf("incompatible configuration: %w", err)
+	}
+
+	var snapshotStore snapshotstore.Store
+	var snapshotProgress *snapshotprogress.Progress
+	var lsnParser replication.LSNParser
+
+	if storeURL := config.SnapshotStoreURL(); storeURL != "" {
+		var err error
+		snapshotStore, err = pgsnapshotstore.New(ctx, storeURL)
+		if err != nil {
+			return fmt.Errorf("creating snapshot store: %w", err)
+		}
+	}
+
+	if snapshotStore != nil && config.Listener.Postgres != nil && config.Listener.Postgres.Snapshot != nil && config.Listener.Postgres.Snapshot.Delta != nil {
+		if err := PlanDeltaSnapshotRequests(ctx, logger, config.Listener.Postgres.Snapshot, snapshotStore, config.SourcePostgresURL()); err != nil {
+			if errors.Is(err, deltaqueue.ErrNoCompletedTables) {
+				logger.Info("delta planner waiting for first snapshot completion")
+			} else {
+				snapshotStore.Close()
+				return fmt.Errorf("planning delta snapshot requests: %w", err)
+			}
+		}
+	}
+
+	if snapshotStore != nil {
+		var err error
+		lsnParser = pgreplication.NewLSNParser()
+		snapshotProgress, err = snapshotprogress.New(ctx, snapshotStore, lsnParser, 0)
+		if err != nil {
+			snapshotStore.Close()
+			return fmt.Errorf("initialising snapshot progress: %w", err)
+		}
+		defer snapshotProgress.Close()
+	} else {
+		defer func() {
+			if snapshotStore != nil {
+				snapshotStore.Close()
+			}
+		}()
 	}
 
 	if init {
@@ -109,9 +153,15 @@ func Run(ctx context.Context, logger loglib.Logger, config *Config, init bool, i
 		checkpoint = pgCheckpointer.SyncLSN
 	}
 
+	if snapshotStore != nil && checkpoint != nil && config.Listener.Postgres != nil && config.Listener.Postgres.Snapshot != nil && config.Listener.Postgres.Snapshot.Delta != nil {
+		if err := runPendingDeltaSnapshots(ctx, logger, config, checkpoint, instrumentation, snapshotProgress); err != nil {
+			return fmt.Errorf("running pending delta snapshots: %w", err)
+		}
+	}
+
 	// Processor
 
-	processor, closer, err := newProcessor(ctx, logger, config, checkpoint, processorTypeReplication, instrumentation)
+	processor, closer, err := newProcessor(ctx, logger, config, checkpoint, processorTypeReplication, instrumentation, snapshotProgress, lsnParser)
 	defer closer()
 	if err != nil {
 		return err
@@ -131,7 +181,7 @@ func Run(ctx context.Context, logger loglib.Logger, config *Config, init bool, i
 			// use a dedicated processor for the snapshot phase, to be able to
 			// close it and make sure the snapshot is complete before starting
 			// to process the WAL replication events.
-			snapshotProcessor, snapshotCloser, err := newProcessor(ctx, logger, config, checkpoint, processorTypeSnapshot, instrumentation)
+			snapshotProcessor, snapshotCloser, err := newProcessor(ctx, logger, config, checkpoint, processorTypeSnapshot, instrumentation, nil, nil)
 			defer snapshotCloser()
 			if err != nil {
 				return fmt.Errorf("error creating snapshot processor: %w", err)
@@ -142,7 +192,8 @@ func Run(ctx context.Context, logger loglib.Logger, config *Config, init bool, i
 				config.Listener.Postgres.Snapshot,
 				snapshotProcessor,
 				logger,
-				instrumentation)
+				instrumentation,
+				snapshotProgress)
 			if err != nil {
 				return err
 			}
@@ -187,7 +238,7 @@ var noopCloser func() error = func() error {
 	return nil
 }
 
-func newProcessor(ctx context.Context, logger loglib.Logger, config *Config, checkpoint checkpointer.Checkpoint, processorType processorType, instrumentation *otel.Instrumentation) (processor.Processor, closerFn, error) {
+func newProcessor(ctx context.Context, logger loglib.Logger, config *Config, checkpoint checkpointer.Checkpoint, processorType processorType, instrumentation *otel.Instrumentation, progressTracker *snapshotprogress.Progress, lsnParser replication.LSNParser) (processor.Processor, closerFn, error) {
 	processor, err := buildProcessor(ctx, logger, &config.Processor, checkpoint, processorType, instrumentation)
 	if err != nil {
 		return nil, noopCloser, err
@@ -197,6 +248,9 @@ func newProcessor(ctx context.Context, logger loglib.Logger, config *Config, che
 	processor, closer, err = addProcessorModifiers(ctx, config, logger, processor, instrumentation)
 	if err != nil {
 		return nil, noopCloser, err
+	}
+	if processorType == processorTypeReplication && progressTracker != nil && lsnParser != nil {
+		processor = newSnapshotProgressProcessor(processor, progressTracker, lsnParser, logger)
 	}
 
 	closerAgg.addCloserFn(closer)

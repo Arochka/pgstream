@@ -58,6 +58,22 @@ const iso8601Format = "2006-01-02 15:04:05.999999+00"
 
 var validTimeFormats = []string{iso8601Format, time.RFC3339}
 
+type toastUnchangedValue struct{}
+
+var toastSentinel = toastUnchangedValue{}
+
+// UnchangedToastValue returns a sentinel that marks a column value as an
+// unchanged TOAST column in pgoutput messages.
+func UnchangedToastValue() any {
+	return toastSentinel
+}
+
+// IsUnchangedToast reports whether v is the toast sentinel.
+func IsUnchangedToast(v any) bool {
+	_, ok := v.(toastUnchangedValue)
+	return ok
+}
+
 var errUnrecognizedEventTimestampFormat = errors.New("unrecognized wal event timestamp format")
 
 func (d *Data) GetTimestamp() (time.Time, error) {

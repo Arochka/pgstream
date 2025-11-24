@@ -13,6 +13,8 @@ type ReplicationConn struct {
 	StartReplicationFn        func(ctx context.Context, cfg postgres.ReplicationConfig) error
 	SendStandbyStatusUpdateFn func(ctx context.Context, lsn uint64) error
 	ReceiveMessageFn          func(ctx context.Context) (*postgres.ReplicationMessage, error)
+	CreateReplicationSlotFn   func(ctx context.Context, slotName, plugin string, opts postgres.CreateReplicationSlotOptions) (postgres.CreateReplicationSlotResult, error)
+	DropReplicationSlotFn     func(ctx context.Context, slotName string, wait bool) error
 	CloseFn                   func(ctx context.Context) error
 }
 
@@ -30,6 +32,14 @@ func (m *ReplicationConn) SendStandbyStatusUpdate(ctx context.Context, lsn uint6
 
 func (m *ReplicationConn) ReceiveMessage(ctx context.Context) (*postgres.ReplicationMessage, error) {
 	return m.ReceiveMessageFn(ctx)
+}
+
+func (m *ReplicationConn) CreateReplicationSlot(ctx context.Context, slotName, plugin string, opts postgres.CreateReplicationSlotOptions) (postgres.CreateReplicationSlotResult, error) {
+	return m.CreateReplicationSlotFn(ctx, slotName, plugin, opts)
+}
+
+func (m *ReplicationConn) DropReplicationSlot(ctx context.Context, slotName string, wait bool) error {
+	return m.DropReplicationSlotFn(ctx, slotName, wait)
 }
 
 func (m *ReplicationConn) Close(ctx context.Context) error {

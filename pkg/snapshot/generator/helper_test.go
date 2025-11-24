@@ -11,6 +11,7 @@ import (
 type mockGenerator struct {
 	createSnapshotFn func(ctx context.Context, snapshot *snapshot.Snapshot) error
 	closeFn          func() error
+	completionHook   TableCompletionHook
 }
 
 func (m *mockGenerator) CreateSnapshot(ctx context.Context, snapshot *snapshot.Snapshot) error {
@@ -22,4 +23,8 @@ func (m *mockGenerator) Close() error {
 		return m.closeFn()
 	}
 	return nil
+}
+
+func (m *mockGenerator) SetTableCompletionHook(hook TableCompletionHook) {
+	m.completionHook = hook
 }

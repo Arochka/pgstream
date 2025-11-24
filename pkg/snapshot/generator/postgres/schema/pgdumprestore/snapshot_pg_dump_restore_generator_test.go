@@ -1375,12 +1375,17 @@ func TestSnapshotGenerator_parseDump(t *testing.T) {
 	}
 	dump := sg.parseDump(dumpBytes)
 
-	filteredStr := strings.Trim(string(dump.filtered), "\n")
-	wantFilteredStr := strings.Trim(string(wantFilteredDumpBytes), "\n")
-	constraintsStr := strings.Trim(string(dump.indicesAndConstraints), "\n")
-	wantConstraintsStr := strings.Trim(string(wantConstraintsBytes), "\n")
-	eventTriggersStr := strings.Trim(string(dump.eventTriggers), "\n")
-	wantEventTriggersStr := strings.Trim(string(wantEventTriggersBytes), "\n")
+	normalize := func(s string) string {
+		s = strings.ReplaceAll(s, "\r\n", "\n")
+		return strings.ReplaceAll(s, "\r", "")
+	}
+
+	filteredStr := normalize(strings.Trim(string(dump.filtered), "\n"))
+	wantFilteredStr := normalize(strings.Trim(string(wantFilteredDumpBytes), "\n"))
+	constraintsStr := normalize(strings.Trim(string(dump.indicesAndConstraints), "\n"))
+	wantConstraintsStr := normalize(strings.Trim(string(wantConstraintsBytes), "\n"))
+	eventTriggersStr := normalize(strings.Trim(string(dump.eventTriggers), "\n"))
+	wantEventTriggersStr := normalize(strings.Trim(string(wantEventTriggersBytes), "\n"))
 	wantSequences := []string{`"musicbrainz"."alternative_medium_id_seq"`, `"musicbrainz"."Alternative_medium_id_seq"`}
 
 	require.Equal(t, wantFilteredStr, filteredStr)

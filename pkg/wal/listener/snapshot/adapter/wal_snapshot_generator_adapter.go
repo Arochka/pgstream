@@ -63,6 +63,9 @@ func (s *SnapshotGeneratorAdapter) CreateSnapshot(ctx context.Context) (err erro
 }
 
 func (s *SnapshotGeneratorAdapter) Close() error {
+	if s.generator == nil {
+		return nil
+	}
 	s.logger.Info("closing snapshot generator")
 	return s.generator.Close()
 }
