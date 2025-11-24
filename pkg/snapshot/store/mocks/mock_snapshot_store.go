@@ -13,6 +13,7 @@ type Store struct {
 	UpdateSnapshotRequestFn       func(context.Context, uint, *snapshot.Request) error
 	GetSnapshotRequestsByStatusFn func(ctx context.Context, status snapshot.Status) ([]*snapshot.Request, error)
 	GetSnapshotRequestsBySchemaFn func(ctx context.Context, s string) ([]*snapshot.Request, error)
+	MarkTableCompletedFn          func(ctx context.Context, schema, table, lsn string) error
 	updateSnapshotRequestCalls    uint
 }
 
@@ -31,6 +32,13 @@ func (m *Store) GetSnapshotRequestsByStatus(ctx context.Context, status snapshot
 
 func (m *Store) GetSnapshotRequestsBySchema(ctx context.Context, s string) ([]*snapshot.Request, error) {
 	return m.GetSnapshotRequestsBySchemaFn(ctx, s)
+}
+
+func (m *Store) MarkTableCompleted(ctx context.Context, schema, table, lsn string) error {
+	if m.MarkTableCompletedFn == nil {
+		return nil
+	}
+	return m.MarkTableCompletedFn(ctx, schema, table, lsn)
 }
 
 func (m *Store) Close() error {

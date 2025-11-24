@@ -252,3 +252,15 @@ func TestInstrumentationConfig_toOtelConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestConvertSnapshotDeltaConfig_ReplayTimeout(t *testing.T) {
+	t.Parallel()
+
+	cfg := &SnapshotDeltaConfig{
+		ReplayTimeout: "5m",
+	}
+
+	deltaCfg, err := convertSnapshotDeltaConfig(cfg)
+	require.NoError(t, err)
+	require.Equal(t, 5*time.Minute, deltaCfg.ReplayTimeout)
+}

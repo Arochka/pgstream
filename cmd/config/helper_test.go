@@ -86,6 +86,7 @@ func validateTestStreamConfig(t *testing.T, streamConfig *stream.Config) {
 					},
 					DisableProgressTracking: true,
 				},
+				SnapshotStoreURL: "postgresql://user:password@localhost:5432/mytargetdatabase",
 			},
 			Kafka: &stream.KafkaListenerConfig{
 				Reader: kafka.ReaderConfig{

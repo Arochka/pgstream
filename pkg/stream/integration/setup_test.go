@@ -16,7 +16,11 @@ func TestMain(m *testing.M) {
 	// if integration tests are not enabled, nothing to setup
 	if os.Getenv("PGSTREAM_INTEGRATION_TESTS") != "" {
 		ctx := context.Background()
-		pgcleanup, err := testcontainers.SetupPostgresContainer(ctx, &pgurl, testcontainers.Postgres14, "config/postgresql.conf")
+		confPath := integrationPostgresConfigPath()
+		pgcleanup, err := testcontainers.SetupPostgresContainer(ctx, testcontainers.ContainerConfig{
+			Image:      testcontainers.Postgres14,
+			ConfigFile: confPath,
+		}, &pgurl)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -44,7 +48,9 @@ func TestMain(m *testing.M) {
 		}
 		defer escleanup()
 
-		targetPGCleanup, err := testcontainers.SetupPostgresContainer(ctx, &targetPGURL, testcontainers.Postgres17)
+		targetPGCleanup, err := testcontainers.SetupPostgresContainer(ctx, testcontainers.ContainerConfig{
+			Image: testcontainers.Postgres17,
+		}, &targetPGURL)
 		if err != nil {
 			log.Fatal(err)
 		}

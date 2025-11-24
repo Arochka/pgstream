@@ -35,6 +35,10 @@ func snapshot(ctx context.Context) error {
 		return fmt.Errorf("parsing stream config: %w", err)
 	}
 
+	if viper.GetBool("PGSTREAM_POSTGRES_SNAPSHOT_DELTA_ENQUEUE") {
+		return enqueueDeltaSnapshotRequests(ctx, streamConfig, zerolog.NewStdLogger(logger))
+	}
+
 	provider, err := newInstrumentationProvider()
 	if err != nil {
 		return err
@@ -74,6 +78,7 @@ func snapshotFlagBinding(cmd *cobra.Command, args []string) error {
 	viper.BindPFlag("PGSTREAM_POSTGRES_SNAPSHOT_TABLES", cmd.Flags().Lookup("tables"))
 	viper.BindPFlag("PGSTREAM_POSTGRES_SNAPSHOT_CLEAN_TARGET_DB", cmd.Flags().Lookup("reset"))
 	viper.BindPFlag("PGSTREAM_POSTGRES_SNAPSHOT_SCHEMA_DUMP_FILE", cmd.Flags().Lookup("dump-file"))
+	viper.BindPFlag("PGSTREAM_POSTGRES_SNAPSHOT_DELTA_ENQUEUE", cmd.Flags().Lookup("delta"))
 	// if not explicitly set, default to repeatable for snapshot command if the
 	// snapshot recorder is provided
 	if viper.GetString("PGSTREAM_POSTGRES_SNAPSHOT_STORE_URL") != "" &&

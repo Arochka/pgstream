@@ -146,6 +146,9 @@ func (a *dmlAdapter) buildWhereQuery(d *wal.Data, placeholderOffset int) (string
 	whereQuery := "WHERE"
 	whereValues := make([]any, 0, len(cols))
 	for i, c := range cols {
+		if wal.IsUnchangedToast(c.Value) {
+			return "", nil, fmt.Errorf("column %s missing value for replica identity", c.Name)
+		}
 		if i != 0 {
 			whereQuery = fmt.Sprintf("%s AND", whereQuery)
 		}
@@ -226,6 +229,9 @@ func (a *dmlAdapter) filterRowColumns(cols []wal.Column, generatedColumns []stri
 	rowColumns := make([]string, 0, len(cols))
 	for _, c := range cols {
 		if _, found := generatedColumnMap[pglib.QuoteIdentifier(c.Name)]; found {
+			continue
+		}
+		if wal.IsUnchangedToast(c.Value) {
 			continue
 		}
 		rowColumns = append(rowColumns, pglib.QuoteIdentifier(c.Name))

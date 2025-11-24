@@ -15,6 +15,8 @@ import (
 	pglib "github.com/xataio/pgstream/internal/postgres"
 	pgmocks "github.com/xataio/pgstream/internal/postgres/mocks"
 	pgmigrations "github.com/xataio/pgstream/migrations/postgres"
+	"github.com/xataio/pgstream/pkg/snapshot"
+	snapshotbuilder "github.com/xataio/pgstream/pkg/wal/listener/snapshot/builder"
 	pgprocessor "github.com/xataio/pgstream/pkg/wal/processor/postgres"
 	"github.com/xataio/pgstream/pkg/wal/processor/transformer"
 	replicationpg "github.com/xataio/pgstream/pkg/wal/replication/postgres"
@@ -115,6 +117,7 @@ func TestStatusChecker_Status(t *testing.T) {
 		migratorBuilder      func(string) (migrator, error)
 		config               *Config
 		ruleValidatorBuilder func(context.Context, string, []string) (ruleValidator, error)
+		snapshotStoreBuilder func(context.Context, string) (deltaSnapshotStore, error)
 
 		wantStatus *Status
 		wantErr    error
@@ -197,16 +200,138 @@ func TestStatusChecker_Status(t *testing.T) {
 			t.Parallel()
 
 			sc := NewStatusChecker()
-			sc.connBuilder = tc.connBuilder
+			if tc.connBuilder != nil {
+				sc.connBuilder = tc.connBuilder
+			}
 			sc.configParser = validConfigParser
-			sc.migratorBuilder = tc.migratorBuilder
-			sc.ruleValidatorBuilder = tc.ruleValidatorBuilder
+			if tc.migratorBuilder != nil {
+				sc.migratorBuilder = tc.migratorBuilder
+			}
+			if tc.ruleValidatorBuilder != nil {
+				sc.ruleValidatorBuilder = tc.ruleValidatorBuilder
+			}
+			if tc.snapshotStoreBuilder != nil {
+				sc.snapshotStoreBuilder = tc.snapshotStoreBuilder
+			}
 
 			status, err := sc.Status(context.Background(), tc.config)
 			require.ErrorIs(t, err, tc.wantErr)
 			require.Equal(t, status, tc.wantStatus)
 		})
 	}
+}
+
+func TestStatusChecker_StatusIncludesDelta(t *testing.T) {
+	t.Parallel()
+
+	const (
+		testReplicationSlot = "pgstream_db_slot"
+		testDB              = "db"
+	)
+	migrationVersion := uint(len(pgmigrations.AssetNames()) / 2)
+
+	config := &Config{
+		Listener: ListenerConfig{
+			Postgres: &PostgresListenerConfig{
+				URL: "postgres://user:password@localhost:5432/db",
+				Replication: replicationpg.Config{
+					PostgresURL:         "postgres://user:password@localhost:5432/db",
+					ReplicationSlotName: testReplicationSlot,
+				},
+				Snapshot:         &snapshotbuilder.SnapshotListenerConfig{},
+				SnapshotStoreURL: "postgres://recorder",
+			},
+		},
+		Processor: ProcessorConfig{
+			Postgres: &PostgresProcessorConfig{
+				BatchWriter: pgprocessor.Config{
+					URL: "postgres://user:password@localhost:7654/db",
+				},
+			},
+			Transformer: &transformer.Config{},
+		},
+	}
+
+	validConfigParser := func(pgURL string) (*pgx.ConnConfig, error) {
+		return &pgx.ConnConfig{Config: pgconn.Config{Database: testDB}}, nil
+	}
+	validMigratorBuilder := func(string) (migrator, error) {
+		return &mockMigrator{
+			versionFn: func() (uint, bool, error) {
+				return migrationVersion, false, nil
+			},
+		}, nil
+	}
+	validConnBuilder := func(ctx context.Context, pgURL string) (pglib.Querier, error) {
+		return &pgmocks.Querier{
+			QueryRowFn: func(ctx context.Context, dest []any, sql string, args ...any) error {
+				switch sql {
+				case "SELECT EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'pgstream')":
+					val, ok := dest[0].(*bool)
+					if !ok {
+						return fmt.Errorf("unexpected destination type for schema exists query")
+					}
+					*val = true
+				case "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'pgstream' AND table_name = 'schema_log')":
+					val, ok := dest[0].(*bool)
+					if !ok {
+						return fmt.Errorf("unexpected destination type for schema_log exists query")
+					}
+					*val = true
+				case "SELECT slot_name, plugin, database FROM pg_replication_slots WHERE slot_name = $1":
+					namePtr, ok := dest[0].(*string)
+					if !ok {
+						return fmt.Errorf("unexpected destination type for slot name")
+					}
+					pluginPtr, ok := dest[1].(*string)
+					if !ok {
+						return fmt.Errorf("unexpected destination type for slot plugin")
+					}
+					dbPtr, ok := dest[2].(*string)
+					if !ok {
+						return fmt.Errorf("unexpected destination type for slot database")
+					}
+					*namePtr = testReplicationSlot
+					*pluginPtr = wal2jsonPlugin
+					*dbPtr = testDB
+				default:
+					return fmt.Errorf("unexpected query: %s", sql)
+				}
+				return nil
+			},
+		}, nil
+	}
+	validRuleValidatorBuilder := func(context.Context, string, []string) (ruleValidator, error) {
+		return func(context.Context, transformer.Rules) (map[string]transformer.ColumnTransformers, error) {
+			return nil, nil
+		}, nil
+	}
+	mockStore := &mockDeltaSnapshotStore{
+		byStatus: map[snapshot.Status][]*snapshot.Request{
+			snapshot.StatusRequested: {
+				{Schema: "public", Tables: []string{"users"}, Mode: snapshot.ModeDelta, StartLSN: "0/1", EndLSN: "0/3"},
+			},
+			snapshot.StatusInProgress: {
+				{Schema: "sales", Tables: []string{"orders"}, Mode: snapshot.ModeDelta, StartLSN: "0/2", EndLSN: "0/6"},
+			},
+		},
+	}
+
+	sc := NewStatusChecker()
+	sc.connBuilder = validConnBuilder
+	sc.configParser = validConfigParser
+	sc.migratorBuilder = validMigratorBuilder
+	sc.ruleValidatorBuilder = validRuleValidatorBuilder
+	sc.snapshotStoreBuilder = func(context.Context, string) (deltaSnapshotStore, error) {
+		return mockStore, nil
+	}
+
+	status, err := sc.Status(context.Background(), config)
+	require.NoError(t, err)
+	require.NotNil(t, status.Delta)
+	require.Len(t, status.Delta.Pending, 1)
+	require.Len(t, status.Delta.InProgress, 1)
+	require.Equal(t, uint64(2), status.Delta.Pending[0].LagBytes)
 }
 
 func TestStatusChecker_configStatus(t *testing.T) {
@@ -737,6 +862,19 @@ func TestStatusChecker_transformationRulesStatus(t *testing.T) {
 		})
 	}
 }
+
+type mockDeltaSnapshotStore struct {
+	byStatus map[snapshot.Status][]*snapshot.Request
+}
+
+func (m *mockDeltaSnapshotStore) GetSnapshotRequestsByStatus(ctx context.Context, status snapshot.Status) ([]*snapshot.Request, error) {
+	if m.byStatus == nil {
+		return nil, nil
+	}
+	return m.byStatus[status], nil
+}
+
+func (m *mockDeltaSnapshotStore) Close() error { return nil }
 
 func TestStatusChecker_validateSchemaStatus(t *testing.T) {
 	t.Parallel()

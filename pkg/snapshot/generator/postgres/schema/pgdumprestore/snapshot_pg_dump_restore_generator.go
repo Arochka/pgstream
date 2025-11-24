@@ -42,6 +42,7 @@ type SnapshotGenerator struct {
 	roleSQLParser          *roleSQLParser
 	optionGenerator        *optionGenerator
 	snapshotTracker        snapshotProgressTracker
+	publicationsToDrop     []string
 }
 
 type snapshotProgressTracker interface {
@@ -208,6 +209,10 @@ func (s *SnapshotGenerator) CreateSnapshot(ctx context.Context, ss *snapshot.Sna
 
 	// RESTORE
 
+	if err := s.dropTargetPublications(ctx); err != nil {
+		return err
+	}
+
 	if err := s.restoreSchemas(ctx, dumpSchemas); err != nil {
 		return err
 	}
@@ -272,6 +277,12 @@ func (s *SnapshotGenerator) Close() error {
 	}
 
 	return nil
+}
+
+func (s *SnapshotGenerator) SetTableCompletionHook(hook generator.TableCompletionHook) {
+	if notifier, ok := s.generator.(generator.TableCompletionNotifier); ok {
+		notifier.SetTableCompletionHook(hook)
+	}
 }
 
 func (s *SnapshotGenerator) dumpSchema(ctx context.Context, schemaTables map[string][]string, excludedTables map[string][]string) (*dump, error) {
@@ -404,6 +415,28 @@ func (s *SnapshotGenerator) restoreDump(ctx context.Context, dump []byte) error 
 		}
 	}
 
+	return nil
+}
+
+func (s *SnapshotGenerator) dropTargetPublications(ctx context.Context) error {
+	if len(s.publicationsToDrop) == 0 {
+		return nil
+	}
+	conn, err := s.connBuilder(ctx, s.targetURL)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+
+	for _, pub := range s.publicationsToDrop {
+		if pub == "" {
+			continue
+		}
+		stmt := fmt.Sprintf("DROP PUBLICATION IF EXISTS %s", pglib.QuoteIdentifier(pub))
+		if _, err := conn.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("dropping publication %s on target: %w", pub, err)
+		}
+	}
 	return nil
 }
 
@@ -805,4 +838,12 @@ func extractEventTriggerSchema(line string) (string, error) {
 	}
 
 	return pglib.QuoteIdentifier(functionParts[0]), nil
+}
+func WithDropPublications(publications []string) Option {
+	return func(sg *SnapshotGenerator) {
+		if len(publications) == 0 {
+			return
+		}
+		sg.publicationsToDrop = append(sg.publicationsToDrop, publications...)
+	}
 }

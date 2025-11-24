@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -30,6 +32,7 @@ import (
 	"github.com/xataio/pgstream/pkg/wal/processor/injector"
 	kafkaprocessor "github.com/xataio/pgstream/pkg/wal/processor/kafka"
 	"github.com/xataio/pgstream/pkg/wal/processor/postgres"
+	"github.com/xataio/pgstream/pkg/wal/processor/search"
 	"github.com/xataio/pgstream/pkg/wal/processor/search/store"
 	"github.com/xataio/pgstream/pkg/wal/processor/transformer"
 	"github.com/xataio/pgstream/pkg/wal/processor/webhook"
@@ -45,6 +48,14 @@ var (
 	elasticsearchURL string
 )
 
+var integrationPGConfigPath = func() string {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("resolve integration config path")
+	}
+	return filepath.Join(filepath.Dir(file), "config", "postgresql.conf")
+}()
+
 const (
 	withBulkIngestion    = true
 	withoutBulkIngestion = false
@@ -52,6 +63,10 @@ const (
 	withGeneratedColumn    = true
 	withoutGeneratedColumn = false
 )
+
+func integrationPostgresConfigPath() string {
+	return integrationPGConfigPath
+}
 
 type mockProcessor struct {
 	eventChan chan *wal.Event
@@ -194,19 +209,6 @@ func testKafkaProcessorCfg() stream.ProcessorConfig {
 	}
 }
 
-func testSearchProcessorCfg(storeCfg store.Config) stream.ProcessorConfig {
-	return stream.ProcessorConfig{
-		Search: &stream.SearchProcessorConfig{
-			Store: storeCfg,
-		},
-		Injector: &injector.Config{
-			Store: schemalogpg.Config{
-				URL: pgurl,
-			},
-		},
-	}
-}
-
 func testWebhookProcessorCfg() stream.ProcessorConfig {
 	return stream.ProcessorConfig{
 		Webhook: &stream.WebhookProcessorConfig{
@@ -269,6 +271,30 @@ func testPostgresProcessorCfgWithTransformer(sourcePGURL string) stream.Processo
 		},
 		Transformer: &transformer.Config{
 			TransformerRules: testTransformationRules(),
+		},
+	}
+}
+
+func testSearchProcessorCfg(storeCfg store.Config) stream.ProcessorConfig {
+	return stream.ProcessorConfig{
+		Search: &stream.SearchProcessorConfig{
+			Store: storeCfg,
+			Indexer: search.IndexerConfig{
+				Batch: batch.Config{
+					BatchTimeout: 100 * time.Millisecond,
+					MaxBatchSize: 1,
+				},
+			},
+			Retrier: search.StoreRetryConfig{
+				Backoff: backoff.Config{
+					DisableRetries: true,
+				},
+			},
+		},
+		Injector: &injector.Config{
+			Store: schemalogpg.Config{
+				URL: pgurl,
+			},
 		},
 	}
 }

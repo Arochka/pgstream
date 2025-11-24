@@ -102,6 +102,12 @@ func (s *SnapshotGenerator) Close() error {
 	return nil
 }
 
+func (s *SnapshotGenerator) SetTableCompletionHook(hook generator.TableCompletionHook) {
+	if notifier, ok := s.generator.(generator.TableCompletionNotifier); ok {
+		notifier.SetTableCompletionHook(hook)
+	}
+}
+
 func (s *SnapshotGenerator) logEntryToWalEvent(logEntry *schemalog.LogEntry) (*wal.Event, error) {
 	schema, err := s.marshaler(logEntry.Schema)
 	if err != nil {

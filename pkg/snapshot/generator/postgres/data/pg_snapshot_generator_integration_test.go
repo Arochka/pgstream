@@ -23,7 +23,9 @@ func Test_PostgresSnapshotGenerator(t *testing.T) {
 	defer cancel()
 
 	var pgurl string
-	pgCleanup, err := testcontainers.SetupPostgresContainer(ctx, &pgurl, testcontainers.Postgres14)
+	pgCleanup, err := testcontainers.SetupPostgresContainer(ctx, testcontainers.ContainerConfig{
+		Image: testcontainers.Postgres14,
+	}, &pgurl)
 	require.NoError(t, err)
 	defer pgCleanup()
 

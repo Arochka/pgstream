@@ -8,6 +8,10 @@
 // migrations/postgres/11_update_pgstream_log_schema_function.up.sql
 // migrations/postgres/12_update_column_flags_in_get_schema_function.down.sql
 // migrations/postgres/12_update_column_flags_in_get_schema_function.up.sql
+// migrations/postgres/13_add_completed_tables_to_snapshot_requests.down.sql
+// migrations/postgres/13_add_completed_tables_to_snapshot_requests.up.sql
+// migrations/postgres/14_allow_multiple_delta_snapshot_requests.down.sql
+// migrations/postgres/14_allow_multiple_delta_snapshot_requests.up.sql
 // migrations/postgres/1_create_pgstream_xid.down.sql
 // migrations/postgres/1_create_pgstream_xid.up.sql
 // migrations/postgres/2_create_pgstream_schemalog_table.down.sql
@@ -218,6 +222,86 @@ func _12_update_column_flags_in_get_schema_functionUpSql() (*asset, error) {
 	}
 
 	info := bindataFileInfo{name: "12_update_column_flags_in_get_schema_function.up.sql", size: 6740, mode: os.FileMode(420), modTime: time.Unix(1763643628, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
+var __13_add_completed_tables_to_snapshot_requestsDownSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\xbc\x8e\xbf\x4e\xc6\x20\x14\xc5\x77\x9e\xe2\x0e\x24\xe8\xe2\x0b\x74\xfa\x5a\x6e\x95\x04\xa9\xa1\x90\x74\x23\x58\x49\x1d\xe8\x1f\x7b\xf1\xfd\x4d\x6d\x52\x27\xd7\xef\x6c\x27\x39\x27\xbf\x9f\xec\x80\x73\x56\xe3\xb3\x32\x0c\x00\x40\xb5\x50\xd6\xb0\xa7\x69\xcc\x91\xe8\x41\x6c\x13\x95\x3d\xc5\xf9\x89\x96\xb8\xd1\xe7\x5a\xc2\x9e\xbe\xbe\x13\x15\x12\x8f\xa0\x7a\x30\x5e\x6b\x70\x2f\x78\xbe\x8f\x58\x74\xde\x9a\xea\xb7\xa3\x91\xa0\xda\x8a\x9d\x65\xc0\xc6\x3b\x04\x71\x4d\x6f\xda\xa1\x05\x77\xab\x35\xc2\xff\xa0\x6b\x7e\x44\xda\xee\x0d\x9a\x4e\xfb\x57\x73\xb8\xe2\xa0\x7a\xd7\xc3\xb8\xce\x5b\x4e\x25\x7d\x84\x12\xdf\x73\x0a\x99\x16\x3a\x0d\xc4\xdd\xe1\x7f\x60\x34\x92\x71\x5e\xb1\x9f\x00\x00\x00\xff\xff\xd5\x14\xfe\xfe\x64\x01\x00\x00")
+
+func _13_add_completed_tables_to_snapshot_requestsDownSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__13_add_completed_tables_to_snapshot_requestsDownSql,
+		"13_add_completed_tables_to_snapshot_requests.down.sql",
+	)
+}
+
+func _13_add_completed_tables_to_snapshot_requestsDownSql() (*asset, error) {
+	bytes, err := _13_add_completed_tables_to_snapshot_requestsDownSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "13_add_completed_tables_to_snapshot_requests.down.sql", size: 356, mode: os.FileMode(511), modTime: time.Unix(1763982896, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
+var __13_add_completed_tables_to_snapshot_requestsUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\xc4\xce\x41\x6b\x83\x40\x10\x05\xe0\xbb\xbf\xe2\x1d\x84\x6d\x2f\xfd\x01\xc9\x49\xb3\x63\xbb\x65\xbb\x82\xce\x82\x50\x8a\x98\x74\x49\x29\x46\xad\xb3\x3d\x95\xfe\xf7\x12\x05\x6f\x39\x77\x6e\x0f\xde\x63\x3e\x5d\x22\x4d\x93\x9c\x1e\x8d\x4b\x00\xc0\x14\x88\x63\x3b\x87\xf3\xa9\xef\x44\xee\xd4\x74\x96\x38\x87\xee\xf2\x20\x43\x37\xc9\xc7\x18\xdb\x39\x7c\x7d\x07\x89\xa2\xee\x61\x6a\x38\x6f\x2d\xf8\x89\xd6\xf5\xf5\x2a\x62\x5f\xb9\xfd\x92\xc9\x69\x98\x62\x9f\xac\xa1\xa1\x83\x67\x82\xda\xaa\x99\x65\xaa\xc0\x59\x6e\x09\xb7\x1f\x6d\xf5\x65\xa2\x35\x0e\xa5\xf5\x2f\xee\x4a\x75\x25\x83\x1a\x53\x73\x8d\xd3\x78\x99\xfa\x10\xc3\x7b\x1b\xbb\x63\x1f\x04\x4c\x0d\xbf\xbe\x2d\x95\x05\xa9\xa9\xc8\xbc\x65\x28\xf5\xf3\xab\xd4\xea\x53\xff\x41\x6b\x7b\x19\x04\xcf\x75\xe9\xf2\x5b\xba\xdd\xee\x53\xc6\xe1\xb8\x21\xc9\xe9\x24\x4d\xf7\xc9\x5f\x00\x00\x00\xff\xff\x72\xdb\xea\xa7\xae\x01\x00\x00")
+
+func _13_add_completed_tables_to_snapshot_requestsUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__13_add_completed_tables_to_snapshot_requestsUpSql,
+		"13_add_completed_tables_to_snapshot_requests.up.sql",
+	)
+}
+
+func _13_add_completed_tables_to_snapshot_requestsUpSql() (*asset, error) {
+	bytes, err := _13_add_completed_tables_to_snapshot_requestsUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "13_add_completed_tables_to_snapshot_requests.up.sql", size: 430, mode: os.FileMode(511), modTime: time.Unix(1763982882, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
+var __14_allow_multiple_delta_snapshot_requestsDownSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x84\x8f\xcf\x6a\xc3\x30\x0c\xc6\xef\x7e\x0a\x0d\x02\x6e\x61\xec\x05\xc2\x0e\x5b\xa3\xae\x86\xe2\x6e\x8e\xcd\x72\x33\x5e\x2a\xda\x42\xfe\x35\x72\x60\x8f\x3f\x32\x97\x0c\x06\x63\x3a\xe9\x3b\x7c\xbf\x9f\x24\x8a\x03\x64\x99\x78\xc6\x17\xa5\x05\x00\x80\xda\x42\xec\xfd\x48\xa7\xba\x09\xcc\x2b\x39\x9c\x38\x8e\x14\xda\x07\xee\xc2\xc0\xe7\x3e\xfa\x91\xae\x13\x71\x64\xb9\x06\x55\x82\x76\xfb\x3d\xd8\x1d\xa6\xf6\x3c\x06\xad\x33\x3a\xff\xce\xa8\x0b\x50\xdb\x5c\xa4\x50\xe1\xc6\x59\x04\x59\x98\xc3\x2b\x28\x5d\x60\x35\xeb\xb0\x52\xa5\x2d\xe1\x47\x54\x9f\xa9\x0d\x3e\x86\x8f\x86\x3c\xc7\x10\x27\xf6\x53\x77\xb9\x4e\xe4\x2f\xdd\x91\x3e\xe5\x6f\xdc\x62\xde\x18\x7c\xb2\x08\x4e\xab\x37\x87\x37\xc1\x7f\xb4\xa5\x7c\xd0\xf0\xf7\xaf\xab\x1b\xa6\x0b\x2d\xdd\x43\x82\xcd\x3b\xaf\x97\xfe\xfb\x0e\x0d\x42\x32\xc0\xdd\x23\x48\x59\xf7\xed\xd0\x50\xa4\xa3\x4c\x27\xca\x5c\xa0\x2e\x44\x96\xe5\xe2\x2b\x00\x00\xff\xff\xae\x4c\x93\x89\x77\x01\x00\x00")
+
+func _14_allow_multiple_delta_snapshot_requestsDownSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__14_allow_multiple_delta_snapshot_requestsDownSql,
+		"14_allow_multiple_delta_snapshot_requests.down.sql",
+	)
+}
+
+func _14_allow_multiple_delta_snapshot_requestsDownSql() (*asset, error) {
+	bytes, err := _14_allow_multiple_delta_snapshot_requestsDownSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "14_allow_multiple_delta_snapshot_requests.down.sql", size: 375, mode: os.FileMode(511), modTime: time.Unix(1764102503, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
+var __14_allow_multiple_delta_snapshot_requestsUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x84\x8f\xcd\x6a\xeb\x30\x10\x85\xf7\x7a\x8a\x73\xc1\xa0\x04\x2e\x7d\x01\xd3\x45\x1a\x4d\x1a\x41\x50\x5a\xc7\xa6\xde\x09\xd5\x1e\x92\x80\xff\x62\xc9\xd0\xc7\x2f\xae\x82\x0b\x85\x52\xad\x74\x18\xce\xf7\xcd\x08\x75\x44\x92\x88\x27\x7a\xd6\x46\x00\x80\xde\x21\xf4\x76\xe4\x73\xd5\x38\xef\x57\x72\x38\xfb\x30\xb2\x6b\x1f\x7c\xe7\x06\x7f\xe9\x83\x1d\xf9\x36\xb1\x0f\x5e\xae\xa1\x4f\x30\xc5\xe1\x80\x7c\x4f\xb1\x3d\xbf\x8c\xf2\x22\x33\xe9\x57\x26\xa3\xa0\x77\xa9\x88\xa1\xa4\x6d\x91\x13\xa4\xca\x8e\x2f\xd0\x46\x51\x39\xeb\xa8\xd4\xa7\xfc\x84\x6f\x51\x75\xe1\xd6\xd9\xe0\xde\x1b\xb6\x3e\xb8\x30\x79\x3b\x75\xd7\xdb\xc4\xf6\xda\xd5\xfc\x21\x7f\xe2\x16\xf3\x36\xa3\x4d\x4e\x28\x8c\x7e\x2d\xe8\x2e\xf8\x8b\xb6\x94\x8f\x06\xbf\xdf\xba\xba\x63\x3a\xd7\xf2\x7f\x44\xd8\xfc\xf7\xeb\xa5\xff\xb6\xa7\x8c\x10\x0d\xf8\xf7\x08\x29\xab\xbe\x1d\x1a\x0e\x5c\x4b\x89\x8d\x51\x68\xfb\x9a\xe3\xa4\xe6\x26\x38\x19\x17\x97\xa9\x20\xa3\x44\x92\xa4\xe2\x33\x00\x00\xff\xff\x48\xc2\xae\x01\x8d\x01\x00\x00")
+
+func _14_allow_multiple_delta_snapshot_requestsUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__14_allow_multiple_delta_snapshot_requestsUpSql,
+		"14_allow_multiple_delta_snapshot_requests.up.sql",
+	)
+}
+
+func _14_allow_multiple_delta_snapshot_requestsUpSql() (*asset, error) {
+	bytes, err := _14_allow_multiple_delta_snapshot_requestsUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "14_allow_multiple_delta_snapshot_requests.up.sql", size: 397, mode: os.FileMode(511), modTime: time.Unix(1764102500, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -640,6 +724,10 @@ var _bindata = map[string]func() (*asset, error){
 	"11_update_pgstream_log_schema_function.up.sql":             _11_update_pgstream_log_schema_functionUpSql,
 	"12_update_column_flags_in_get_schema_function.down.sql":    _12_update_column_flags_in_get_schema_functionDownSql,
 	"12_update_column_flags_in_get_schema_function.up.sql":      _12_update_column_flags_in_get_schema_functionUpSql,
+	"13_add_completed_tables_to_snapshot_requests.down.sql":     _13_add_completed_tables_to_snapshot_requestsDownSql,
+	"13_add_completed_tables_to_snapshot_requests.up.sql":       _13_add_completed_tables_to_snapshot_requestsUpSql,
+	"14_allow_multiple_delta_snapshot_requests.down.sql":        _14_allow_multiple_delta_snapshot_requestsDownSql,
+	"14_allow_multiple_delta_snapshot_requests.up.sql":          _14_allow_multiple_delta_snapshot_requestsUpSql,
 	"1_create_pgstream_xid.down.sql":                            _1_create_pgstream_xidDownSql,
 	"1_create_pgstream_xid.up.sql":                              _1_create_pgstream_xidUpSql,
 	"2_create_pgstream_schemalog_table.down.sql":                _2_create_pgstream_schemalog_tableDownSql,
@@ -707,6 +795,10 @@ var _bintree = &bintree{nil, map[string]*bintree{
 	"11_update_pgstream_log_schema_function.up.sql":             &bintree{_11_update_pgstream_log_schema_functionUpSql, map[string]*bintree{}},
 	"12_update_column_flags_in_get_schema_function.down.sql":    &bintree{_12_update_column_flags_in_get_schema_functionDownSql, map[string]*bintree{}},
 	"12_update_column_flags_in_get_schema_function.up.sql":      &bintree{_12_update_column_flags_in_get_schema_functionUpSql, map[string]*bintree{}},
+	"13_add_completed_tables_to_snapshot_requests.down.sql":     &bintree{_13_add_completed_tables_to_snapshot_requestsDownSql, map[string]*bintree{}},
+	"13_add_completed_tables_to_snapshot_requests.up.sql":       &bintree{_13_add_completed_tables_to_snapshot_requestsUpSql, map[string]*bintree{}},
+	"14_allow_multiple_delta_snapshot_requests.down.sql":        &bintree{_14_allow_multiple_delta_snapshot_requestsDownSql, map[string]*bintree{}},
+	"14_allow_multiple_delta_snapshot_requests.up.sql":          &bintree{_14_allow_multiple_delta_snapshot_requestsUpSql, map[string]*bintree{}},
 	"1_create_pgstream_xid.down.sql":                            &bintree{_1_create_pgstream_xidDownSql, map[string]*bintree{}},
 	"1_create_pgstream_xid.up.sql":                              &bintree{_1_create_pgstream_xidUpSql, map[string]*bintree{}},
 	"2_create_pgstream_schemalog_table.down.sql":                &bintree{_2_create_pgstream_schemalog_tableDownSql, map[string]*bintree{}},

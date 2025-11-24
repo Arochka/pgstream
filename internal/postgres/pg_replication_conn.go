@@ -19,6 +19,8 @@ type ReplicationQuerier interface {
 	StartReplication(ctx context.Context, cfg ReplicationConfig) error
 	SendStandbyStatusUpdate(ctx context.Context, lsn uint64) error
 	ReceiveMessage(ctx context.Context) (*ReplicationMessage, error)
+	CreateReplicationSlot(ctx context.Context, slotName, plugin string, opts CreateReplicationSlotOptions) (CreateReplicationSlotResult, error)
+	DropReplicationSlot(ctx context.Context, slotName string, wait bool) error
 	Close(ctx context.Context) error
 }
 
@@ -38,6 +40,19 @@ type ReplicationMessage struct {
 	WALData        []byte
 	ReplyRequested bool
 }
+
+type CreateReplicationSlotOptions struct {
+	Temporary      bool
+	SnapshotAction string
+}
+
+type CreateReplicationSlotResult struct {
+	SlotName        string
+	ConsistentPoint string
+	SnapshotName    string
+}
+
+const SnapshotActionExport = "EXPORT_SNAPSHOT"
 
 type IdentifySystemResult pglogrepl.IdentifySystemResult
 
@@ -124,6 +139,29 @@ func (c *ReplicationConn) ReceiveMessage(ctx context.Context) (*ReplicationMessa
 		// unexpected message (WAL error?)
 		return nil, fmt.Errorf("unexpected message: %#v", msg)
 	}
+}
+
+func (c *ReplicationConn) CreateReplicationSlot(ctx context.Context, slotName, plugin string, opts CreateReplicationSlotOptions) (CreateReplicationSlotResult, error) {
+	createOpts := pglogrepl.CreateReplicationSlotOptions{
+		Temporary: opts.Temporary,
+		Mode:      pglogrepl.LogicalReplication,
+	}
+	if opts.SnapshotAction != "" {
+		createOpts.SnapshotAction = opts.SnapshotAction
+	}
+	res, err := pglogrepl.CreateReplicationSlot(ctx, c.conn, slotName, plugin, createOpts)
+	if err != nil {
+		return CreateReplicationSlotResult{}, MapError(err)
+	}
+	return CreateReplicationSlotResult{
+		SlotName:        res.SlotName,
+		ConsistentPoint: res.ConsistentPoint,
+		SnapshotName:    res.SnapshotName,
+	}, nil
+}
+
+func (c *ReplicationConn) DropReplicationSlot(ctx context.Context, slotName string, wait bool) error {
+	return MapError(pglogrepl.DropReplicationSlot(ctx, c.conn, slotName, pglogrepl.DropReplicationSlotOptions{Wait: wait}))
 }
 
 func (c *ReplicationConn) Close(ctx context.Context) error {

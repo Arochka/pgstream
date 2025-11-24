@@ -16,7 +16,11 @@ import (
 	loglib "github.com/xataio/pgstream/pkg/log"
 	"github.com/xataio/pgstream/pkg/otel"
 	"github.com/xataio/pgstream/pkg/snapshot"
+	"github.com/xataio/pgstream/pkg/snapshot/generator"
+	"github.com/xataio/pgstream/pkg/wal/delta"
 	"github.com/xataio/pgstream/pkg/wal/processor"
+	replication "github.com/xataio/pgstream/pkg/wal/replication"
+	replicationpg "github.com/xataio/pgstream/pkg/wal/replication/postgres"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -37,13 +41,19 @@ type SnapshotGenerator struct {
 	processor              processor.Processor
 	tableSnapshotGenerator snapshotTableFn
 
-	progressTracking   bool
-	progressBars       *synclib.Map[string, progress.Bar]
-	progressBarBuilder func(totalBytes int64, description string) progress.Bar
+	progressTracking    bool
+	progressBars        *synclib.Map[string, progress.Bar]
+	progressBarBuilder  func(totalBytes int64, description string) progress.Bar
+	tableCompletionHook generator.TableCompletionHook
+	deltaStreamer       deltaStreamer
+	deltaDecoder        delta.MessageDecoder
+	deltaConfig         *snapshot.DeltaConfig
+	lsnParser           replication.LSNParser
 }
 
-type mapper interface {
-	TypeForOID(context.Context, uint32) (string, error)
+type deltaStreamer interface {
+	StreamBetween(ctx context.Context, slotName string, startLSN, endLSN replication.LSN, handler func(*pglib.ReplicationMessage) error) error
+	StreamExistingSlotBetween(ctx context.Context, slotInfo delta.SlotInfo, startLSN, endLSN replication.LSN, handler func(*pglib.ReplicationMessage) error) error
 }
 
 type tableInfo struct {
@@ -79,6 +89,8 @@ func NewSnapshotGenerator(ctx context.Context, cfg *Config, processor processor.
 		return nil, err
 	}
 
+	typeMapper := pglib.NewMapper(conn)
+
 	sg := &SnapshotGenerator{
 		logger:          loglib.NewNoopLogger(),
 		conn:            conn,
@@ -87,6 +99,8 @@ func NewSnapshotGenerator(ctx context.Context, cfg *Config, processor processor.
 		tableWorkers:    cfg.tableWorkers(),
 		schemaWorkers:   cfg.schemaWorkers(),
 		snapshotWorkers: cfg.snapshotWorkers(),
+		deltaConfig:     cfg.Delta,
+		lsnParser:       replicationpg.NewLSNParser(),
 	}
 
 	sg.tableSnapshotGenerator = sg.snapshotTable
@@ -95,7 +109,10 @@ func NewSnapshotGenerator(ctx context.Context, cfg *Config, processor processor.
 		opt(sg)
 	}
 
-	sg.adapter = newAdapter(pglib.NewMapper(conn), sg.logger)
+	sg.adapter = newAdapter(typeMapper, sg.logger)
+	if sg.deltaDecoder == nil {
+		sg.deltaDecoder = delta.NewPGOutputDecoder(typeMapper, sg.lsnParser)
+	}
 
 	return sg, nil
 }
@@ -130,6 +147,22 @@ func WithProgressTracking() Option {
 			return progress.NewBytesBar(totalBytes, description)
 		}
 	}
+}
+
+func WithDeltaReader(streamer deltaStreamer) Option {
+	return func(sg *SnapshotGenerator) {
+		sg.deltaStreamer = streamer
+	}
+}
+
+func WithDeltaEventDecoder(decoder delta.MessageDecoder) Option {
+	return func(sg *SnapshotGenerator) {
+		sg.deltaDecoder = decoder
+	}
+}
+
+func (sg *SnapshotGenerator) SetTableCompletionHook(hook generator.TableCompletionHook) {
+	sg.tableCompletionHook = hook
 }
 
 func (sg *SnapshotGenerator) CreateSnapshot(ctx context.Context, ss *snapshot.Snapshot) (err error) {
@@ -171,6 +204,10 @@ func (sg *SnapshotGenerator) CreateSnapshot(ctx context.Context, ss *snapshot.Sn
 		return err
 	}
 
+	if err := sg.runDeltaSnapshots(ctx, ss.DeltaRequests); err != nil {
+		return err
+	}
+
 	// collect all schema errors and return them as a single error
 	return sg.collectSchemaErrors(schemaErrs)
 }
@@ -185,7 +222,7 @@ func (sg *SnapshotGenerator) createSchemaSnapshot(ctx context.Context, schemaTab
 	// transaction that exported it.
 	// https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-SNAPSHOT-SYNCHRONIZATION
 	return sg.conn.ExecInTxWithOptions(ctx, func(tx pglib.Tx) (err error) {
-		snapshotID, err := sg.exportSnapshot(ctx, tx)
+		snapshotID, snapshotLSN, err := sg.exportSnapshot(ctx, tx)
 		if err != nil {
 			return snapshot.NewSchemaErrors(schemaTables.schema, err)
 		}
@@ -209,7 +246,7 @@ func (sg *SnapshotGenerator) createSchemaSnapshot(ctx context.Context, schemaTab
 		for i := uint(0); i < sg.schemaWorkers; i++ {
 			wg.Add(1)
 			workerTableErrs[i] = make(map[string]error, len(schemaTables.tables))
-			go sg.createSnapshotWorker(ctx, wg, snapshotID, tableChan, workerTableErrs[i])
+			go sg.createSnapshotWorker(ctx, wg, snapshotID, snapshotLSN, tableChan, workerTableErrs[i])
 		}
 
 		for _, tableName := range schemaTables.tables {
@@ -226,7 +263,7 @@ func (sg *SnapshotGenerator) createSchemaSnapshot(ctx context.Context, schemaTab
 	}, snapshotTxOptions())
 }
 
-func (sg *SnapshotGenerator) createSnapshotWorker(ctx context.Context, wg *sync.WaitGroup, snapshotID string, tableChan <-chan *table, tableErrMap map[string]error) {
+func (sg *SnapshotGenerator) createSnapshotWorker(ctx context.Context, wg *sync.WaitGroup, snapshotID, snapshotLSN string, tableChan <-chan *table, tableErrMap map[string]error) {
 	defer wg.Done()
 	for t := range tableChan {
 		logFields := loglib.Fields{"schema": t.schema, "table": t.name, "snapshotID": snapshotID}
@@ -238,9 +275,18 @@ func (sg *SnapshotGenerator) createSnapshotWorker(ctx context.Context, wg *sync.
 			if !errors.Is(err, pglib.ErrNoRows) {
 				tableErrMap[t.name] = err
 			}
+		} else {
+			sg.notifyTableCompleted(ctx, t.schema, t.name, snapshotLSN)
 		}
 		sg.logger.Debug("table snapshot completed", logFields)
 	}
+}
+
+func (sg *SnapshotGenerator) notifyTableCompleted(ctx context.Context, schema, table, snapshotLSN string) {
+	if sg.tableCompletionHook == nil {
+		return
+	}
+	sg.tableCompletionHook(ctx, schema, table, snapshotLSN)
 }
 
 func (sg *SnapshotGenerator) collectTableErrors(schema string, workerTableErrs []map[string]error) error {
@@ -277,6 +323,108 @@ func (sg *SnapshotGenerator) collectSchemaErrors(workerSchemaErrs map[string]err
 		return snapshotErrs
 	}
 
+	return nil
+}
+
+func (sg *SnapshotGenerator) runDeltaSnapshots(ctx context.Context, requests []*snapshot.Request) error {
+	if len(requests) == 0 || sg.deltaStreamer == nil {
+		return nil
+	}
+	slotSanitizer := func(value string) string {
+		value = strings.ReplaceAll(value, `"`, "")
+		value = strings.ReplaceAll(value, ".", "_")
+		return value
+	}
+	for _, req := range requests {
+		if req == nil || req.Mode != snapshot.ModeDelta {
+			continue
+		}
+		if req.StartLSN == "" {
+			sg.logger.Warn(nil, "delta snapshot missing start LSN", loglib.Fields{"schema": req.Schema, "tables": req.Tables})
+			continue
+		}
+		startLSN, err := sg.lsnParser.FromString(req.StartLSN)
+		if err != nil {
+			return fmt.Errorf("parse start LSN %s: %w", req.StartLSN, err)
+		}
+		targetLSN := startLSN
+		if req.EndLSN != "" {
+			targetLSN, err = sg.lsnParser.FromString(req.EndLSN)
+			if err != nil {
+				return fmt.Errorf("parse end LSN %s: %w", req.EndLSN, err)
+			}
+		}
+		for _, table := range req.Tables {
+			if table == "" {
+				continue
+			}
+			deltaCtx, deltaCancel := context.WithCancel(context.Background())
+			go func() {
+				select {
+				case <-ctx.Done():
+					deltaCancel()
+				case <-deltaCtx.Done():
+				}
+			}()
+			useExistingSlot := sg.deltaConfig != nil && sg.deltaConfig.SlotName != ""
+			slotName := fmt.Sprintf("pgstream_delta_%s_%s", slotSanitizer(req.Schema), slotSanitizer(table))
+			if useExistingSlot {
+				slotName = sg.deltaConfig.SlotName
+			}
+			runFields := loglib.Fields{
+				"schema":     req.Schema,
+				"table":      table,
+				"slot":       slotName,
+				"start_lsn":  req.StartLSN,
+				"target_lsn": sg.lsnParser.ToString(targetLSN),
+			}
+			sg.logger.Info("replaying delta snapshot", runFields)
+			var lastLSN replication.LSN
+			var events uint64
+			handler := func(msg *pglib.ReplicationMessage) error {
+				if msg != nil {
+					lastLSN = replication.LSN(msg.LSN)
+				}
+				decoded, err := sg.deltaDecoder.Decode(ctx, msg)
+				if err != nil {
+					return err
+				}
+				for _, event := range decoded {
+					if err := sg.processor.ProcessWALEvent(ctx, event); err != nil {
+						return err
+					}
+					if event.Data != nil && event.Data.Action != "" {
+						events++
+					}
+				}
+				return nil
+			}
+			var streamErr error
+			if useExistingSlot {
+				streamErr = sg.deltaStreamer.StreamExistingSlotBetween(deltaCtx, delta.SlotInfo{Name: slotName}, startLSN, targetLSN, handler)
+			} else {
+				streamErr = sg.deltaStreamer.StreamBetween(deltaCtx, slotName, startLSN, targetLSN, handler)
+			}
+			if streamErr != nil {
+				deltaCancel()
+				return fmt.Errorf("delta snapshot %s.%s: %w", req.Schema, table, streamErr)
+			}
+			completedLSN := targetLSN
+			if req.EndLSN == "" && lastLSN != 0 {
+				completedLSN = lastLSN
+			}
+			lsnStr := sg.lsnParser.ToString(completedLSN)
+			sg.logger.Info("delta snapshot completed", loglib.Fields{
+				"schema":     req.Schema,
+				"table":      table,
+				"slot":       slotName,
+				"lsn":        lsnStr,
+				"row_events": events,
+			})
+			sg.notifyTableCompleted(ctx, req.Schema, table, lsnStr)
+			deltaCancel()
+		}
+	}
 	return nil
 }
 
@@ -499,14 +647,15 @@ func (sg *SnapshotGenerator) getSnapshotSchemaTotalBytes(ctx context.Context, sn
 	return totalBytes, err
 }
 
-const exportSnapshotQuery = `SELECT pg_export_snapshot()`
+const exportSnapshotQuery = `SELECT pg_export_snapshot(), pg_current_wal_lsn()`
 
-func (sg *SnapshotGenerator) exportSnapshot(ctx context.Context, tx pglib.Tx) (string, error) {
+func (sg *SnapshotGenerator) exportSnapshot(ctx context.Context, tx pglib.Tx) (string, string, error) {
 	var snapshotID string
-	if err := tx.QueryRow(ctx, []any{&snapshotID}, exportSnapshotQuery); err != nil {
-		return "", fmt.Errorf("exporting snapshot: %w", err)
+	var snapshotLSN string
+	if err := tx.QueryRow(ctx, []any{&snapshotID, &snapshotLSN}, exportSnapshotQuery); err != nil {
+		return "", "", fmt.Errorf("exporting snapshot: %w", err)
 	}
-	return snapshotID, nil
+	return snapshotID, snapshotLSN, nil
 }
 
 func (sg *SnapshotGenerator) setTransactionSnapshot(ctx context.Context, tx pglib.Tx, snapshotID string) error {

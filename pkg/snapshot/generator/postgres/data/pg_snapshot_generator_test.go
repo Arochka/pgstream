@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -23,8 +24,11 @@ import (
 	loglib "github.com/xataio/pgstream/pkg/log"
 	"github.com/xataio/pgstream/pkg/snapshot"
 	"github.com/xataio/pgstream/pkg/wal"
+	"github.com/xataio/pgstream/pkg/wal/delta"
 	"github.com/xataio/pgstream/pkg/wal/processor"
 	processormocks "github.com/xataio/pgstream/pkg/wal/processor/mocks"
+	replication "github.com/xataio/pgstream/pkg/wal/replication"
+	replicationpg "github.com/xataio/pgstream/pkg/wal/replication/postgres"
 )
 
 func TestSnapshotGenerator_CreateSnapshot(t *testing.T) {
@@ -93,6 +97,18 @@ func TestSnapshotGenerator_CreateSnapshot(t *testing.T) {
 		return nil
 	}
 
+	const testSnapshotLSN = "0/16B6A70"
+
+	setSnapshotExportResult := func(dest []any) {
+		require.Len(t, dest, 2)
+		snapshotID, ok := dest[0].(*string)
+		require.True(t, ok, fmt.Sprintf("snapshotID, expected *string, got %T", dest[0]))
+		*snapshotID = testSnapshotID
+		snapshotLSN, ok := dest[1].(*string)
+		require.True(t, ok, fmt.Sprintf("snapshotLSN, expected *string, got %T", dest[1]))
+		*snapshotLSN = testSnapshotLSN
+	}
+
 	validTableInfoQueryRowFn := func(_ context.Context, dest []any, query string, args ...any) error {
 		switch query {
 		case tableInfoQuery:
@@ -100,6 +116,9 @@ func TestSnapshotGenerator_CreateSnapshot(t *testing.T) {
 			return validTableInfoScanFn(dest...)
 		case fmt.Sprintf(pageRangeQueryCount, quotedSchemaTable1, 1, 2):
 			return validMissedRowsScanFn(dest...)
+		case exportSnapshotQuery:
+			setSnapshotExportResult(dest)
+			return nil
 		default:
 			return fmt.Errorf("unexpected call to QueryRowFn: %s", query)
 		}
@@ -126,12 +145,11 @@ func TestSnapshotGenerator_CreateSnapshot(t *testing.T) {
 					case 1:
 						mockTx := pgmocks.Tx{
 							QueryRowFn: func(_ context.Context, dest []any, query string, args ...any) error {
-								require.Equal(t, exportSnapshotQuery, query)
-								require.Len(t, dest, 1)
-								snapshotID, ok := dest[0].(*string)
-								require.True(t, ok, fmt.Sprintf("snapshotID, expected *string, got %T", dest[0]))
-								*snapshotID = testSnapshotID
-								return nil
+								if query == exportSnapshotQuery {
+									setSnapshotExportResult(dest)
+									return nil
+								}
+								return fmt.Errorf("unexpected call to QueryRowFn: %s", query)
 							},
 						}
 						return f(&mockTx)
@@ -190,12 +208,11 @@ func TestSnapshotGenerator_CreateSnapshot(t *testing.T) {
 					case 1:
 						mockTx := pgmocks.Tx{
 							QueryRowFn: func(_ context.Context, dest []any, query string, args ...any) error {
-								require.Equal(t, exportSnapshotQuery, query)
-								require.Len(t, dest, 1)
-								snapshotID, ok := dest[0].(*string)
-								require.True(t, ok, fmt.Sprintf("snapshotID, expected *string, got %T", dest[0]))
-								*snapshotID = testSnapshotID
-								return nil
+								if query == exportSnapshotQuery {
+									setSnapshotExportResult(dest)
+									return nil
+								}
+								return fmt.Errorf("unexpected call to QueryRowFn: %s", query)
 							},
 						}
 						return f(&mockTx)
@@ -307,12 +324,11 @@ func TestSnapshotGenerator_CreateSnapshot(t *testing.T) {
 					case 1:
 						mockTx := pgmocks.Tx{
 							QueryRowFn: func(_ context.Context, dest []any, query string, args ...any) error {
-								require.Equal(t, exportSnapshotQuery, query)
-								require.Len(t, dest, 1)
-								snapshotID, ok := dest[0].(*string)
-								require.True(t, ok, fmt.Sprintf("snapshotID, expected *string, got %T", dest[0]))
-								*snapshotID = testSnapshotID
-								return nil
+								if query == exportSnapshotQuery {
+									setSnapshotExportResult(dest)
+									return nil
+								}
+								return fmt.Errorf("unexpected call to QueryRowFn: %s", query)
 							},
 						}
 						return f(&mockTx)
@@ -394,10 +410,7 @@ func TestSnapshotGenerator_CreateSnapshot(t *testing.T) {
 					mockTx := pgmocks.Tx{
 						QueryRowFn: func(_ context.Context, dest []any, query string, args ...any) error {
 							if query == exportSnapshotQuery {
-								require.Len(t, dest, 1)
-								snapshotID, ok := dest[0].(*string)
-								require.True(t, ok, fmt.Sprintf("snapshotID, expected *string, got %T", dest[0]))
-								*snapshotID = testSnapshotID
+								setSnapshotExportResult(dest)
 								return nil
 							}
 							if query == tableInfoQuery {
@@ -456,12 +469,11 @@ func TestSnapshotGenerator_CreateSnapshot(t *testing.T) {
 					case 1:
 						mockTx := pgmocks.Tx{
 							QueryRowFn: func(_ context.Context, dest []any, query string, args ...any) error {
-								require.Equal(t, exportSnapshotQuery, query)
-								require.Len(t, dest, 1)
-								snapshotID, ok := dest[0].(*string)
-								require.True(t, ok, fmt.Sprintf("snapshotID, expected *string, got %T", dest[0]))
-								*snapshotID = testSnapshotID
-								return nil
+								if query == exportSnapshotQuery {
+									setSnapshotExportResult(dest)
+									return nil
+								}
+								return fmt.Errorf("unexpected call to QueryRowFn: %s", query)
 							},
 						}
 						return f(&mockTx)
@@ -521,12 +533,11 @@ func TestSnapshotGenerator_CreateSnapshot(t *testing.T) {
 					case 1:
 						mockTx := pgmocks.Tx{
 							QueryRowFn: func(_ context.Context, dest []any, query string, args ...any) error {
-								require.Equal(t, exportSnapshotQuery, query)
-								require.Len(t, dest, 1)
-								snapshotID, ok := dest[0].(*string)
-								require.True(t, ok, fmt.Sprintf("snapshotID, expected *string, got %T", dest[0]))
-								*snapshotID = testSnapshotID
-								return nil
+								if query == exportSnapshotQuery {
+									setSnapshotExportResult(dest)
+									return nil
+								}
+								return fmt.Errorf("unexpected call to QueryRowFn: %s", query)
 							},
 						}
 						return f(&mockTx)
@@ -578,8 +589,10 @@ func TestSnapshotGenerator_CreateSnapshot(t *testing.T) {
 					case 1:
 						mockTx := pgmocks.Tx{
 							QueryRowFn: func(_ context.Context, dest []any, query string, args ...any) error {
-								require.Equal(t, exportSnapshotQuery, query)
-								return errTest
+								if query == exportSnapshotQuery {
+									return errTest
+								}
+								return fmt.Errorf("unexpected call to QueryRowFn: %s", query)
 							},
 						}
 						return f(&mockTx)
@@ -601,12 +614,11 @@ func TestSnapshotGenerator_CreateSnapshot(t *testing.T) {
 					case 1:
 						mockTx := pgmocks.Tx{
 							QueryRowFn: func(_ context.Context, dest []any, query string, args ...any) error {
-								require.Equal(t, exportSnapshotQuery, query)
-								require.Len(t, dest, 1)
-								snapshotID, ok := dest[0].(*string)
-								require.True(t, ok, fmt.Sprintf("snapshotID, expected *string, got %T", dest[0]))
-								*snapshotID = testSnapshotID
-								return nil
+								if query == exportSnapshotQuery {
+									setSnapshotExportResult(dest)
+									return nil
+								}
+								return fmt.Errorf("unexpected call to QueryRowFn: %s", query)
 							},
 						}
 						return f(&mockTx)
@@ -644,12 +656,11 @@ func TestSnapshotGenerator_CreateSnapshot(t *testing.T) {
 					case 1:
 						mockTx := pgmocks.Tx{
 							QueryRowFn: func(_ context.Context, dest []any, query string, args ...any) error {
-								require.Equal(t, exportSnapshotQuery, query)
-								require.Len(t, dest, 1)
-								snapshotID, ok := dest[0].(*string)
-								require.True(t, ok, fmt.Sprintf("snapshotID, expected *string, got %T", dest[0]))
-								*snapshotID = testSnapshotID
-								return nil
+								if query == exportSnapshotQuery {
+									setSnapshotExportResult(dest)
+									return nil
+								}
+								return fmt.Errorf("unexpected call to QueryRowFn: %s", query)
 							},
 						}
 						return f(&mockTx)
@@ -692,12 +703,11 @@ func TestSnapshotGenerator_CreateSnapshot(t *testing.T) {
 					case 1:
 						mockTx := pgmocks.Tx{
 							QueryRowFn: func(_ context.Context, dest []any, query string, args ...any) error {
-								require.Equal(t, exportSnapshotQuery, query)
-								require.Len(t, dest, 1)
-								snapshotID, ok := dest[0].(*string)
-								require.True(t, ok, fmt.Sprintf("snapshotID, expected *string, got %T", dest[0]))
-								*snapshotID = testSnapshotID
-								return nil
+								if query == exportSnapshotQuery {
+									setSnapshotExportResult(dest)
+									return nil
+								}
+								return fmt.Errorf("unexpected call to QueryRowFn: %s", query)
 							},
 						}
 						return f(&mockTx)
@@ -745,12 +755,11 @@ func TestSnapshotGenerator_CreateSnapshot(t *testing.T) {
 					case 1:
 						mockTx := pgmocks.Tx{
 							QueryRowFn: func(_ context.Context, dest []any, query string, args ...any) error {
-								require.Equal(t, exportSnapshotQuery, query)
-								require.Len(t, dest, 1)
-								snapshotID, ok := dest[0].(*string)
-								require.True(t, ok, fmt.Sprintf("snapshotID, expected *string, got %T", dest[0]))
-								*snapshotID = testSnapshotID
-								return nil
+								if query == exportSnapshotQuery {
+									setSnapshotExportResult(dest)
+									return nil
+								}
+								return fmt.Errorf("unexpected call to QueryRowFn: %s", query)
 							},
 						}
 						return f(&mockTx)
@@ -803,12 +812,11 @@ func TestSnapshotGenerator_CreateSnapshot(t *testing.T) {
 					case 1:
 						mockTx := pgmocks.Tx{
 							QueryRowFn: func(_ context.Context, dest []any, query string, args ...any) error {
-								require.Equal(t, exportSnapshotQuery, query)
-								require.Len(t, dest, 1)
-								snapshotID, ok := dest[0].(*string)
-								require.True(t, ok, fmt.Sprintf("snapshotID, expected *string, got %T", dest[0]))
-								*snapshotID = testSnapshotID
-								return nil
+								if query == exportSnapshotQuery {
+									setSnapshotExportResult(dest)
+									return nil
+								}
+								return fmt.Errorf("unexpected call to QueryRowFn: %s", query)
 							},
 						}
 						return f(&mockTx)
@@ -865,12 +873,11 @@ func TestSnapshotGenerator_CreateSnapshot(t *testing.T) {
 					case 1:
 						mockTx := pgmocks.Tx{
 							QueryRowFn: func(_ context.Context, dest []any, query string, args ...any) error {
-								require.Equal(t, exportSnapshotQuery, query)
-								require.Len(t, dest, 1)
-								snapshotID, ok := dest[0].(*string)
-								require.True(t, ok, fmt.Sprintf("snapshotID, expected *string, got %T", dest[0]))
-								*snapshotID = testSnapshotID
-								return nil
+								if query == exportSnapshotQuery {
+									setSnapshotExportResult(dest)
+									return nil
+								}
+								return fmt.Errorf("unexpected call to QueryRowFn: %s", query)
 							},
 						}
 						return f(&mockTx)
@@ -926,10 +933,7 @@ func TestSnapshotGenerator_CreateSnapshot(t *testing.T) {
 					mockTx := pgmocks.Tx{
 						QueryRowFn: func(_ context.Context, dest []any, query string, args ...any) error {
 							if query == exportSnapshotQuery {
-								require.Len(t, dest, 1)
-								snapshotID, ok := dest[0].(*string)
-								require.True(t, ok, fmt.Sprintf("snapshotID, expected *string, got %T", dest[0]))
-								*snapshotID = testSnapshotID
+								setSnapshotExportResult(dest)
 								return nil
 							}
 							if query == tableInfoQuery {
@@ -973,12 +977,11 @@ func TestSnapshotGenerator_CreateSnapshot(t *testing.T) {
 					case 1:
 						mockTx := pgmocks.Tx{
 							QueryRowFn: func(_ context.Context, dest []any, query string, args ...any) error {
-								require.Equal(t, exportSnapshotQuery, query)
-								require.Len(t, dest, 1)
-								snapshotID, ok := dest[0].(*string)
-								require.True(t, ok, fmt.Sprintf("snapshotID, expected *string, got %T", dest[0]))
-								*snapshotID = testSnapshotID
-								return nil
+								if query == exportSnapshotQuery {
+									setSnapshotExportResult(dest)
+									return nil
+								}
+								return fmt.Errorf("unexpected call to QueryRowFn: %s", query)
 							},
 						}
 						return f(&mockTx)
@@ -1069,6 +1072,150 @@ func TestSnapshotGenerator_CreateSnapshot(t *testing.T) {
 			require.Empty(t, diff, fmt.Sprintf("got: \n%v, \nwant \n%v, \ndiff: \n%s", events, tc.wantEvents, diff))
 		})
 	}
+}
+
+func TestSnapshotGenerator_runDeltaSnapshots(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	streamer := &mockDeltaStreamer{}
+	calls := 0
+	streamer.streamFn = func(ctx context.Context, slot string, start, end replication.LSN, handler func(*pglib.ReplicationMessage) error) error {
+		require.Equal(t, "pgstream_delta_public_test", slot)
+		calls++
+		return handler(&pglib.ReplicationMessage{
+			LSN:     uint64(end),
+			WALData: []byte(`{"action":"I","schema":"public","table":"test","columns":[{"name":"id","type":"int4","value":1}]}`),
+		})
+	}
+
+	var processed []*wal.Event
+	proc := &processormocks.Processor{
+		ProcessWALEventFn: func(ctx context.Context, event *wal.Event) error {
+			processed = append(processed, event)
+			return nil
+		},
+	}
+	sg := &SnapshotGenerator{
+		logger:        loglib.NewNoopLogger(),
+		processor:     proc,
+		deltaStreamer: streamer,
+		lsnParser:     replicationpg.NewLSNParser(),
+		deltaDecoder: &mockDeltaDecoder{
+			decodeFn: func(ctx context.Context, msg *pglib.ReplicationMessage) ([]*wal.Event, error) {
+				return []*wal.Event{
+					{
+						CommitPosition: wal.CommitPosition("0/2"),
+						Data: &wal.Data{
+							Action: "I",
+							Schema: "public",
+							Table:  "test",
+						},
+					},
+				}, nil
+			},
+		},
+	}
+
+	req := &snapshot.Request{
+		Schema:   "public",
+		Tables:   []string{"test"},
+		Mode:     snapshot.ModeDelta,
+		StartLSN: "0/1",
+		EndLSN:   "0/2",
+	}
+
+	require.NoError(t, sg.runDeltaSnapshots(ctx, []*snapshot.Request{req}))
+	require.Equal(t, 1, calls)
+	require.Len(t, processed, 1)
+	require.Equal(t, "public", processed[0].Data.Schema)
+	require.Equal(t, "test", processed[0].Data.Table)
+}
+
+func TestSnapshotGenerator_runDeltaSnapshotsExistingSlot(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	streamer := &mockDeltaStreamer{}
+	calls := 0
+	streamer.streamExistingF = func(ctx context.Context, info delta.SlotInfo, start, end replication.LSN, handler func(*pglib.ReplicationMessage) error) error {
+		require.Equal(t, "shared_slot", info.Name)
+		calls++
+		return handler(&pglib.ReplicationMessage{
+			LSN:     uint64(end),
+			WALData: []byte(`{"action":"I","schema":"public","table":"test","columns":[{"name":"id","type":"int4","value":1}]}`),
+		})
+	}
+
+	var processed []*wal.Event
+	proc := &processormocks.Processor{
+		ProcessWALEventFn: func(ctx context.Context, event *wal.Event) error {
+			processed = append(processed, event)
+			return nil
+		},
+	}
+	sg := &SnapshotGenerator{
+		logger:        loglib.NewNoopLogger(),
+		processor:     proc,
+		deltaStreamer: streamer,
+		deltaDecoder: &mockDeltaDecoder{
+			decodeFn: func(ctx context.Context, msg *pglib.ReplicationMessage) ([]*wal.Event, error) {
+				return []*wal.Event{
+					{
+						CommitPosition: wal.CommitPosition("0/2"),
+						Data: &wal.Data{
+							Action: "I",
+							Schema: "public",
+							Table:  "test",
+						},
+					},
+				}, nil
+			},
+		},
+		deltaConfig: &snapshot.DeltaConfig{
+			SlotName: "shared_slot",
+		},
+		lsnParser: replicationpg.NewLSNParser(),
+	}
+
+	req := &snapshot.Request{
+		Schema:   "public",
+		Tables:   []string{"test"},
+		Mode:     snapshot.ModeDelta,
+		StartLSN: "0/1",
+		EndLSN:   "0/2",
+	}
+
+	require.NoError(t, sg.runDeltaSnapshots(ctx, []*snapshot.Request{req}))
+	require.Equal(t, 1, calls)
+	require.Len(t, processed, 1)
+}
+
+type mockDeltaStreamer struct {
+	streamFn        func(ctx context.Context, slot string, start, end replication.LSN, handler func(*pglib.ReplicationMessage) error) error
+	streamExistingF func(ctx context.Context, info delta.SlotInfo, start, end replication.LSN, handler func(*pglib.ReplicationMessage) error) error
+}
+
+func (m *mockDeltaStreamer) StreamBetween(ctx context.Context, slot string, start, end replication.LSN, handler func(*pglib.ReplicationMessage) error) error {
+	if m.streamFn == nil {
+		return nil
+	}
+	return m.streamFn(ctx, slot, start, end, handler)
+}
+
+func (m *mockDeltaStreamer) StreamExistingSlotBetween(ctx context.Context, info delta.SlotInfo, start, end replication.LSN, handler func(*pglib.ReplicationMessage) error) error {
+	if m.streamExistingF == nil {
+		return nil
+	}
+	return m.streamExistingF(ctx, info, start, end, handler)
+}
+
+type mockDeltaDecoder struct {
+	decodeFn func(context.Context, *pglib.ReplicationMessage) ([]*wal.Event, error)
+}
+
+func (m *mockDeltaDecoder) Decode(ctx context.Context, msg *pglib.ReplicationMessage) ([]*wal.Event, error) {
+	return m.decodeFn(ctx, msg)
 }
 
 func TestTablePageInfo_calculateBatchPageSize(t *testing.T) {
@@ -1585,4 +1732,32 @@ func TestSnapshotGenerator_snapshotTableRange(t *testing.T) {
 			require.Empty(t, diff, fmt.Sprintf("got: \n%v, \nwant \n%v, \ndiff: \n%s", events, tc.wantEvents, diff))
 		})
 	}
+}
+
+func TestSnapshotGenerator_TableCompletionHook(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	sg := &SnapshotGenerator{
+		logger: loglib.NewNoopLogger(),
+	}
+	sg.tableSnapshotGenerator = func(ctx context.Context, snapshotID string, table *table) error {
+		return nil
+	}
+
+	var completed []string
+	sg.SetTableCompletionHook(func(ctx context.Context, schema, table, lsn string) {
+		completed = append(completed, fmt.Sprintf("%s.%s@%s", schema, table, lsn))
+	})
+
+	tableChan := make(chan *table, 1)
+	tableChan <- &table{schema: "public", name: "users"}
+	close(tableChan)
+
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go sg.createSnapshotWorker(ctx, wg, "snapshot-id", "snapshot-lsn", tableChan, map[string]error{})
+	wg.Wait()
+
+	require.Equal(t, []string{"public.users@snapshot-lsn"}, completed)
 }

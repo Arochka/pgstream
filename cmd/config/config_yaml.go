@@ -11,6 +11,7 @@ import (
 	"github.com/xataio/pgstream/pkg/kafka"
 	"github.com/xataio/pgstream/pkg/otel"
 	pgschemalog "github.com/xataio/pgstream/pkg/schemalog/postgres"
+	"github.com/xataio/pgstream/pkg/snapshot"
 	pgsnapshotgenerator "github.com/xataio/pgstream/pkg/snapshot/generator/postgres/data"
 	"github.com/xataio/pgstream/pkg/snapshot/generator/postgres/schema/pgdumprestore"
 	"github.com/xataio/pgstream/pkg/stream"
@@ -80,6 +81,7 @@ type SnapshotConfig struct {
 	SnapshotWorkers         int                     `mapstructure:"snapshot_workers" yaml:"snapshot_workers"`
 	Data                    *SnapshotDataConfig     `mapstructure:"data" yaml:"data"`
 	Schema                  *SnapshotSchemaConfig   `mapstructure:"schema" yaml:"schema"`
+	Delta                   *SnapshotDeltaConfig    `mapstructure:"delta" yaml:"delta"`
 	DisableProgressTracking bool                    `mapstructure:"disable_progress_tracking" yaml:"disable_progress_tracking"`
 }
 
@@ -93,6 +95,20 @@ type SnapshotDataConfig struct {
 	TableWorkers   int    `mapstructure:"table_workers" yaml:"table_workers"`
 	BatchBytes     uint64 `mapstructure:"batch_bytes" yaml:"batch_bytes"`
 	MaxConnections uint   `mapstructure:"max_connections" yaml:"max_connections"`
+}
+
+type SnapshotDeltaConfig struct {
+	MaxTablesPerRun   int                                 `mapstructure:"max_tables_per_run" yaml:"max_tables_per_run"`
+	LagThresholdBytes uint64                              `mapstructure:"lag_threshold_bytes" yaml:"lag_threshold_bytes"`
+	PublicationName   string                              `mapstructure:"publication_name" yaml:"publication_name"`
+	SlotName          string                              `mapstructure:"slot_name" yaml:"slot_name"`
+	ReplayTimeout     string                              `mapstructure:"replay_timeout" yaml:"replay_timeout"`
+	AutoPublication   *SnapshotDeltaAutoPublicationConfig `mapstructure:"auto_publication" yaml:"auto_publication"`
+}
+
+type SnapshotDeltaAutoPublicationConfig struct {
+	Enabled   bool     `mapstructure:"enabled" yaml:"enabled"`
+	CustomSQL []string `mapstructure:"custom_sql" yaml:"custom_sql"`
 }
 
 type SnapshotSchemaConfig struct {
@@ -435,6 +451,9 @@ func (c *YAMLConfig) parsePostgresListenerConfig() (*stream.PostgresListenerConf
 		if err != nil {
 			return &stream.PostgresListenerConfig{}, fmt.Errorf("parsing postgres snapshot listener config: %w", err)
 		}
+		if streamCfg.SnapshotStoreURL == "" && streamCfg.Snapshot != nil && streamCfg.Snapshot.Recorder != nil {
+			streamCfg.SnapshotStoreURL = streamCfg.Snapshot.Recorder.SnapshotStoreURL
+		}
 	}
 
 	// if there's a filter config, apply it to the replication config
@@ -460,6 +479,14 @@ func (c *YAMLConfig) parseSnapshotConfig() (*snapshotbuilder.SnapshotListenerCon
 		DisableProgressTracking: snapshotConfig.DisableProgressTracking,
 	}
 
+	if snapshotConfig.Delta != nil {
+		deltaCfg, err := convertSnapshotDeltaConfig(snapshotConfig.Delta)
+		if err != nil {
+			return nil, err
+		}
+		streamCfg.Delta = deltaCfg
+	}
+
 	if snapshotConfig.Recorder != nil {
 		if snapshotConfig.Recorder.PostgresURL == "" {
 			return nil, errInvalidSnapshotRecorderConfig
@@ -479,7 +506,11 @@ func (c *YAMLConfig) parseSnapshotConfig() (*snapshotbuilder.SnapshotListenerCon
 	}
 
 	if snapshotConfig.Mode == fullSnapshotMode || snapshotConfig.Mode == dataSnapshotMode {
-		streamCfg.Data = c.parseDataSnapshotConfig()
+		var err error
+		streamCfg.Data, err = c.parseDataSnapshotConfig()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if snapshotConfig.Mode == fullSnapshotMode || snapshotConfig.Mode == schemaSnapshotMode {
@@ -496,7 +527,7 @@ func (c *YAMLConfig) parseSnapshotConfig() (*snapshotbuilder.SnapshotListenerCon
 	return streamCfg, nil
 }
 
-func (c *YAMLConfig) parseDataSnapshotConfig() *pgsnapshotgenerator.Config {
+func (c *YAMLConfig) parseDataSnapshotConfig() (*pgsnapshotgenerator.Config, error) {
 	snapshotCfg := c.Source.Postgres.Snapshot
 	streamCfg := &pgsnapshotgenerator.Config{
 		URL:             c.Source.Postgres.URL,
@@ -510,7 +541,47 @@ func (c *YAMLConfig) parseDataSnapshotConfig() *pgsnapshotgenerator.Config {
 		streamCfg.MaxConnections = snapshotCfg.Data.MaxConnections
 	}
 
-	return streamCfg
+	if snapshotCfg.Delta != nil {
+		deltaCfg, err := convertSnapshotDeltaConfig(snapshotCfg.Delta)
+		if err != nil {
+			return nil, err
+		}
+		streamCfg.Delta = deltaCfg
+	}
+
+	return streamCfg, nil
+}
+
+func convertSnapshotDeltaConfig(cfg *SnapshotDeltaConfig) (*snapshot.DeltaConfig, error) {
+	if cfg == nil {
+		return nil, nil
+	}
+	var replayTimeout time.Duration
+	if cfg.ReplayTimeout != "" {
+		duration, err := time.ParseDuration(cfg.ReplayTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("invalid delta replay timeout %q: %w", cfg.ReplayTimeout, err)
+		}
+		replayTimeout = duration
+	}
+	return &snapshot.DeltaConfig{
+		MaxTablesPerRun:   cfg.MaxTablesPerRun,
+		LagThresholdBytes: cfg.LagThresholdBytes,
+		PublicationName:   cfg.PublicationName,
+		SlotName:          cfg.SlotName,
+		ReplayTimeout:     replayTimeout,
+		AutoPublication:   convertAutoPublicationConfig(cfg.AutoPublication),
+	}, nil
+}
+
+func convertAutoPublicationConfig(cfg *SnapshotDeltaAutoPublicationConfig) *snapshot.AutoPublicationConfig {
+	if cfg == nil {
+		return nil
+	}
+	return &snapshot.AutoPublicationConfig{
+		Enabled:   cfg.Enabled,
+		CustomSQL: append([]string{}, cfg.CustomSQL...),
+	}
 }
 
 func (c *YAMLConfig) parseSchemaSnapshotConfig() (*snapshotbuilder.SchemaSnapshotConfig, error) {

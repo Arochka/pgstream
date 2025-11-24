@@ -13,6 +13,7 @@ type Store interface {
 	UpdateSnapshotRequest(context.Context, *snapshot.Request) error
 	GetSnapshotRequestsByStatus(ctx context.Context, status snapshot.Status) ([]*snapshot.Request, error)
 	GetSnapshotRequestsBySchema(ctx context.Context, schema string) ([]*snapshot.Request, error)
+	MarkTableCompleted(ctx context.Context, schema, table, lsn string) error
 	Close() error
 }
 

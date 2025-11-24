@@ -23,7 +23,10 @@ func Test_SnapshotToPostgres(t *testing.T) {
 	// postgres container where pgstream hasn't been initialised to be used for
 	// snapshot validation
 	var snapshotPGURL string
-	pgcleanup, err := testcontainers.SetupPostgresContainer(context.Background(), &snapshotPGURL, testcontainers.Postgres14, "config/postgresql.conf")
+	pgcleanup, err := testcontainers.SetupPostgresContainer(context.Background(), testcontainers.ContainerConfig{
+		Image:      testcontainers.Postgres14,
+		ConfigFile: integrationPostgresConfigPath(),
+	}, &snapshotPGURL)
 	require.NoError(t, err)
 	defer pgcleanup()
 

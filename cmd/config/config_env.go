@@ -5,12 +5,14 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/viper"
 	"github.com/xataio/pgstream/pkg/backoff"
 	"github.com/xataio/pgstream/pkg/kafka"
 	"github.com/xataio/pgstream/pkg/otel"
 	pgschemalog "github.com/xataio/pgstream/pkg/schemalog/postgres"
+	"github.com/xataio/pgstream/pkg/snapshot"
 	pgsnapshotgenerator "github.com/xataio/pgstream/pkg/snapshot/generator/postgres/data"
 	"github.com/xataio/pgstream/pkg/snapshot/generator/postgres/schema/pgdumprestore"
 	"github.com/xataio/pgstream/pkg/stream"
@@ -68,6 +70,8 @@ func init() {
 	viper.BindEnv("PGSTREAM_POSTGRES_SNAPSHOT_NO_PRIVILEGES")
 	viper.BindEnv("PGSTREAM_POSTGRES_SNAPSHOT_EXCLUDED_SECURITY_LABELS")
 	viper.BindEnv("PGSTREAM_POSTGRES_SNAPSHOT_DISABLE_PROGRESS_TRACKING")
+	viper.BindEnv("PGSTREAM_POSTGRES_SNAPSHOT_DELTA_AUTO_PUBLICATION_ENABLED")
+	viper.BindEnv("PGSTREAM_POSTGRES_SNAPSHOT_DELTA_AUTO_PUBLICATION_SQL")
 
 	viper.BindEnv("PGSTREAM_POSTGRES_WRITER_TARGET_URL")
 	viper.BindEnv("PGSTREAM_POSTGRES_WRITER_BATCH_TIMEOUT")
@@ -227,6 +231,9 @@ func parsePostgresListenerConfig() (*stream.PostgresListenerConfig, error) {
 		if err != nil {
 			return nil, err
 		}
+		if cfg.SnapshotStoreURL == "" && cfg.Snapshot != nil && cfg.Snapshot.Recorder != nil {
+			cfg.SnapshotStoreURL = cfg.Snapshot.Recorder.SnapshotStoreURL
+		}
 	}
 
 	return cfg, nil
@@ -265,6 +272,9 @@ func parseSnapshotConfig(pgURL string) (*snapshotbuilder.SnapshotListenerConfig,
 			SnapshotWorkers: viper.GetUint("PGSTREAM_POSTGRES_SNAPSHOT_WORKERS"),
 			MaxConnections:  viper.GetUint("PGSTREAM_POSTGRES_SNAPSHOT_MAX_CONNECTIONS"),
 		}
+		if deltaCfg := parseSnapshotDeltaEnvConfig(); deltaCfg != nil {
+			dataSnapshotCfg.Delta = deltaCfg
+		}
 	}
 
 	cfg := &snapshotbuilder.SnapshotListenerConfig{
@@ -282,6 +292,10 @@ func parseSnapshotConfig(pgURL string) (*snapshotbuilder.SnapshotListenerConfig,
 			RepeatableSnapshots: viper.GetBool("PGSTREAM_POSTGRES_SNAPSHOT_STORE_REPEATABLE"),
 			SnapshotStoreURL:    storeURL,
 		}
+	}
+
+	if deltaCfg := parseSnapshotDeltaEnvConfig(); deltaCfg != nil {
+		cfg.Delta = deltaCfg
 	}
 
 	return cfg, nil
@@ -316,6 +330,58 @@ func parseSchemaSnapshotConfig(pgurl string) (*snapshotbuilder.SchemaSnapshotCon
 			URL: pgurl,
 		},
 	}, nil
+}
+
+func parseSnapshotDeltaEnvConfig() *snapshot.DeltaConfig {
+	if !viper.IsSet("PGSTREAM_POSTGRES_SNAPSHOT_DELTA_MAX_TABLES_PER_RUN") &&
+		!viper.IsSet("PGSTREAM_POSTGRES_SNAPSHOT_DELTA_LAG_THRESHOLD_BYTES") &&
+		!viper.IsSet("PGSTREAM_POSTGRES_SNAPSHOT_DELTA_PUBLICATION_NAME") &&
+		!viper.IsSet("PGSTREAM_POSTGRES_SNAPSHOT_DELTA_SLOT_NAME") &&
+		!viper.IsSet("PGSTREAM_POSTGRES_SNAPSHOT_DELTA_REPLAY_TIMEOUT") &&
+		!viper.IsSet("PGSTREAM_POSTGRES_SNAPSHOT_DELTA_AUTO_PUBLICATION_ENABLED") &&
+		!viper.IsSet("PGSTREAM_POSTGRES_SNAPSHOT_DELTA_AUTO_PUBLICATION_SQL") {
+		return nil
+	}
+	return &snapshot.DeltaConfig{
+		MaxTablesPerRun:   viper.GetInt("PGSTREAM_POSTGRES_SNAPSHOT_DELTA_MAX_TABLES_PER_RUN"),
+		LagThresholdBytes: viper.GetUint64("PGSTREAM_POSTGRES_SNAPSHOT_DELTA_LAG_THRESHOLD_BYTES"),
+		PublicationName:   viper.GetString("PGSTREAM_POSTGRES_SNAPSHOT_DELTA_PUBLICATION_NAME"),
+		SlotName:          viper.GetString("PGSTREAM_POSTGRES_SNAPSHOT_DELTA_SLOT_NAME"),
+		ReplayTimeout:     viper.GetDuration("PGSTREAM_POSTGRES_SNAPSHOT_DELTA_REPLAY_TIMEOUT"),
+		AutoPublication:   parseAutoPublicationEnvConfig(),
+	}
+}
+
+func parseAutoPublicationEnvConfig() *snapshot.AutoPublicationConfig {
+	if !viper.IsSet("PGSTREAM_POSTGRES_SNAPSHOT_DELTA_AUTO_PUBLICATION_ENABLED") &&
+		!viper.IsSet("PGSTREAM_POSTGRES_SNAPSHOT_DELTA_AUTO_PUBLICATION_SQL") {
+		return nil
+	}
+	sqlInput := viper.GetString("PGSTREAM_POSTGRES_SNAPSHOT_DELTA_AUTO_PUBLICATION_SQL")
+	statements := parseCustomSQLStatements(sqlInput)
+	if !viper.GetBool("PGSTREAM_POSTGRES_SNAPSHOT_DELTA_AUTO_PUBLICATION_ENABLED") && len(statements) == 0 {
+		return nil
+	}
+	return &snapshot.AutoPublicationConfig{
+		Enabled:   viper.GetBool("PGSTREAM_POSTGRES_SNAPSHOT_DELTA_AUTO_PUBLICATION_ENABLED"),
+		CustomSQL: statements,
+	}
+}
+
+func parseCustomSQLStatements(input string) []string {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return nil
+	}
+	lines := strings.Split(input, "\n")
+	var stmts []string
+	for _, line := range lines {
+		stmt := strings.TrimSpace(line)
+		if stmt != "" {
+			stmts = append(stmts, stmt)
+		}
+	}
+	return stmts
 }
 
 func parseKafkaListenerConfig() *stream.KafkaListenerConfig {

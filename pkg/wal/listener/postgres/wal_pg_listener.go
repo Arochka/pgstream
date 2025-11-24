@@ -82,6 +82,7 @@ func (l *Listener) Listen(ctx context.Context) error {
 			l.logger.Error(err, "pg snapshot and listen")
 			return err
 		}
+		return nil
 	}
 
 	if err := l.replicationHandler.StartReplication(ctx); err != nil {
